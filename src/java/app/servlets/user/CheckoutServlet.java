@@ -6,8 +6,7 @@ import managers.OrderManager;
 import managers.PaymentManager;
 import models.CartItem;
 import models.User;
-import exceptions.NoQuantityLeftException;
-import exceptions.InvalidQuantityException; // If CartManager methods throw this
+import models.OrderDetail; // Ensure this is imported
 
 import javax.servlet.ServletException;
 import javax.servlet.annotation.WebServlet;
@@ -19,6 +18,7 @@ import java.io.IOException;
 import java.sql.SQLException;
 import java.util.List;
 import java.util.ArrayList;
+// No specific need for LocalDateTime here unless for future shipping date estimates etc.
 
 @WebServlet(name = "CheckoutServlet", urlPatterns = {"/CheckoutServlet", "/checkout"})
 public class CheckoutServlet extends HttpServlet {
@@ -29,14 +29,15 @@ public class CheckoutServlet extends HttpServlet {
 
     @Override
     public void init() throws ServletException {
+        super.init();
         try {
             cartManager = new CartManager();
             orderManager = new OrderManager();
             paymentManager = new PaymentManager();
             System.out.println("CheckoutServlet: Managers initialized.");
         } catch (SQLException e) {
-            System.err.println("CheckoutServlet: Error initializing managers: " + e.getMessage());
-            throw new ServletException("Error initializing managers for checkout", e);
+            System.err.println("CheckoutServlet: Failed to initialize managers: " + e.getMessage());
+            throw new ServletException("Failed to initialize managers for CheckoutServlet", e);
         }
     }
 
@@ -47,105 +48,114 @@ public class CheckoutServlet extends HttpServlet {
         User loggedInUser = (session != null) ? (User) session.getAttribute("loggedInUser") : null;
 
         if (loggedInUser == null) {
+            System.out.println("CheckoutServlet: User not logged in. Redirecting to login.");
             response.sendRedirect(request.getContextPath() + "/LoginServlet");
             return;
         }
 
-        try {
-            List<CartItem> cartItems = cartManager.getCartItems(loggedInUser.getUserId());
-            // Now that calculateTotal exists in CartManager:
-            double totalAmount = cartManager.calculateTotal(cartItems);
+        // Clear any previous checkout errors from session if user revisits GET
+        String checkoutError = (String) session.getAttribute("checkoutError");
+        if (checkoutError != null) {
+            request.setAttribute("errorMessage", checkoutError); // Display it once
+            session.removeAttribute("checkoutError");          // Clear from session
+        }
 
+
+        try {
+            // Corrected method call: getCartItems instead of getCartItemsByUserId
+            List<CartItem> cartItems = cartManager.getCartItems(loggedInUser.getUserId());
             if (cartItems.isEmpty()) {
-                session.setAttribute("cartMessage", "Your cart is empty. Add some products to checkout.");
-                response.sendRedirect(request.getContextPath() + "/CartServlet");
+                System.out.println("CheckoutServlet: Cart is empty. Redirecting to cart page.");
+                request.setAttribute("errorMessage", "Your cart is empty. Add items before checking out.");
+                // Forward to cart page if empty, so they see message and cart.
+                request.getRequestDispatcher("/WEB-INF/jsp/user/cart.jsp").forward(request, response);
                 return;
             }
+            double totalAmount = cartManager.calculateTotal(cartItems);
 
             request.setAttribute("cartItems", cartItems);
             request.setAttribute("totalAmount", totalAmount);
-            request.setAttribute("user", loggedInUser);
-
-            System.out.println("CheckoutServlet GET: Forwarding to checkout.jsp for user " + loggedInUser.getUserId());
+            System.out.println("CheckoutServlet: Forwarding to checkout.jsp with " + cartItems.size() + " items, total: " + totalAmount);
             request.getRequestDispatcher("/WEB-INF/jsp/user/checkout.jsp").forward(request, response);
 
         } catch (SQLException e) {
-            System.err.println("CheckoutServlet GET: SQL error fetching cart for checkout: " + e.getMessage());
-            e.printStackTrace();
-            request.setAttribute("errorMessage", "Could not load your cart for checkout. Please try again.");
-            request.getRequestDispatcher("/WEB-INF/jsp/user/checkout.jsp").forward(request, response); // Forward to show error on page
+            System.err.println("CheckoutServlet: SQL error during GET: " + e.getMessage());
+            request.setAttribute("errorMessage", "Error retrieving cart for checkout: " + e.getMessage());
+            request.getRequestDispatcher("/WEB-INF/jsp/user/cart.jsp").forward(request, response);
         }
     }
 
     protected void doPost(HttpServletRequest request, HttpServletResponse response)
             throws ServletException, IOException {
-        System.out.println("CheckoutServlet: Received POST request (place order).");
+        System.out.println("CheckoutServlet: Received POST request (placing order).");
         HttpSession session = request.getSession(false);
         User loggedInUser = (session != null) ? (User) session.getAttribute("loggedInUser") : null;
 
         if (loggedInUser == null) {
+            System.out.println("CheckoutServlet: User not logged in for POST. Redirecting to login.");
             response.sendRedirect(request.getContextPath() + "/LoginServlet");
             return;
         }
 
-        List<CartItem> cartItems = new ArrayList<>(); // Initialize to prevent null pointer if first try fails
-        double totalAmount = 0.0;
-
         try {
-            cartItems = cartManager.getCartItems(loggedInUser.getUserId());
-            // Now that calculateTotal exists in CartManager:
-            totalAmount = cartManager.calculateTotal(cartItems);
-
+            // Corrected method call: getCartItems instead of getCartItemsByUserId
+            List<CartItem> cartItems = cartManager.getCartItems(loggedInUser.getUserId());
             if (cartItems.isEmpty()) {
-                session.setAttribute("checkoutError", "Your cart is empty. Cannot place order.");
+                System.out.println("CheckoutServlet: Cart is empty on POST. Redirecting to CartServlet.");
+                session.setAttribute("cartError", "Your cart is empty. Cannot place order.");
                 response.sendRedirect(request.getContextPath() + "/CartServlet");
                 return;
             }
 
-            String shippingAddress = "Default Shipping Address - Please Update Profile";
-            if (loggedInUser.getAddress() != null && !loggedInUser.getAddress().trim().isEmpty()) {
-                shippingAddress = loggedInUser.getAddress();
+            double totalAmount = cartManager.calculateTotal(cartItems);
+            // For this demo, shipping address can be a placeholder or fetched from User model if available
+            String shippingAddress = (loggedInUser.getAddress() != null && !loggedInUser.getAddress().isEmpty())
+                                     ? loggedInUser.getAddress()
+                                     : "Default Shipping Address - Placeholder";
+
+            // Convert List<CartItem> to List<OrderDetail>
+            List<OrderDetail> orderDetails = new ArrayList<>();
+            for (CartItem cartItem : cartItems) {
+                orderDetails.add(new OrderDetail(
+                    null, // OrderDetailID will be generated by OrderManager/DB
+                    null, // OrderID will be set by OrderManager
+                    cartItem.getProduct().getProductId(),
+                    cartItem.getProduct().getName(),    // Product name at the time of order
+                    cartItem.getQuantity(),
+                    cartItem.getProduct().getPrice()    // Price at the time of order
+                ));
             }
-            // String formShippingAddress = request.getParameter("shippingAddress"); // If you add this to your JSP form
-            // if (formShippingAddress != null && !formShippingAddress.trim().isEmpty()) {
-            //     shippingAddress = formShippingAddress;
-            // }
 
-            String orderId = orderManager.placeOrder(loggedInUser.getUserId(), cartItems, totalAmount, shippingAddress);
-            System.out.println("CheckoutServlet POST: Order placed with ID: " + orderId);
+            // Call the corrected method in OrderManager
+            String orderId = orderManager.createOrder(loggedInUser.getUserId(), orderDetails, totalAmount, shippingAddress);
 
-            String paymentDetails = "Cash on Delivery (Demo)";
-            paymentManager.recordPayment(orderId, totalAmount, paymentDetails);
-            System.out.println("CheckoutServlet POST: Demo payment recorded for order ID: " + orderId);
+            System.out.println("CheckoutServlet: Order creation attempted. Order ID: " + orderId);
 
+            // If order placed successfully:
+            // 1. Record payment (simulated)
+            paymentManager.recordPayment(orderId, totalAmount, "Cash on Delivery (Demo)");
+            System.out.println("CheckoutServlet: Payment recorded for order " + orderId);
+
+            // 2. Clear the user's cart
             cartManager.clearCart(loggedInUser.getUserId());
-            System.out.println("CheckoutServlet POST: Cart cleared for user: " + loggedInUser.getUserId());
+            System.out.println("CheckoutServlet: Cart cleared for user " + loggedInUser.getUserId());
 
+            // 3. Redirect to order confirmation/history page
+            session.setAttribute("lastOrderId", orderId); // For potential use on confirmation page
             session.setAttribute("orderSuccessMessage", "Your order (ID: " + orderId + ") has been placed successfully!");
-            session.setAttribute("lastOrderId", orderId);
+            System.out.println("CheckoutServlet: Redirecting to OrderHistoryServlet for confirmation.");
             response.sendRedirect(request.getContextPath() + "/OrderHistoryServlet?action=confirmation");
 
-        } catch (NoQuantityLeftException e) { // This catch block is now valid if OrderManager.placeOrder declares it
-            System.err.println("CheckoutServlet POST: NoQuantityLeftException: " + e.getMessage());
-            session.setAttribute("checkoutError", "Order failed: " + e.getMessage() + " Please update your cart.");
-            response.sendRedirect(request.getContextPath() + "/CartServlet");
-        }
-        catch (SQLException e) {
-            System.err.println("CheckoutServlet POST: SQLException during order placement: " + e.getMessage());
+        } catch (SQLException e) {
+            System.err.println("CheckoutServlet: SQL Error during order placement: " + e.getMessage());
             e.printStackTrace();
-            request.setAttribute("errorMessage", "A database error occurred while placing your order. Please try again. Details: " + e.getMessage());
-            request.setAttribute("cartItems", cartItems);
-            request.setAttribute("totalAmount", totalAmount);
-            request.setAttribute("user", loggedInUser);
-            request.getRequestDispatcher("/WEB-INF/jsp/user/checkout.jsp").forward(request, response);
-        } catch (Exception e) {
-            System.err.println("CheckoutServlet POST: Unexpected error during order placement: " + e.getMessage());
+            session.setAttribute("checkoutError", "Failed to place your order due to a database error. Please try again. Details: " + e.getMessage());
+            response.sendRedirect(request.getContextPath() + "/CheckoutServlet"); // Redirect back to GET to show checkout page with error
+        } catch (Exception e) { // Catch any other unexpected errors
+            System.err.println("CheckoutServlet: Unexpected error during order placement: " + e.getMessage());
             e.printStackTrace();
-            request.setAttribute("errorMessage", "An unexpected error occurred while processing your order. Please contact support.");
-            request.setAttribute("cartItems", cartItems);
-            request.setAttribute("totalAmount", totalAmount);
-            request.setAttribute("user", loggedInUser);
-            request.getRequestDispatcher("/WEB-INF/jsp/user/checkout.jsp").forward(request, response);
+            session.setAttribute("checkoutError", "An unexpected error occurred while placing your order: " + e.getMessage());
+            response.sendRedirect(request.getContextPath() + "/CheckoutServlet");
         }
     }
 }

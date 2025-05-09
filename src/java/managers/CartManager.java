@@ -32,7 +32,7 @@ public class CartManager {
      * @return A list of CartItem objects.
      * @throws SQLException if a database error occurs.
      */
-    public List<CartItem> getCartItems(String userId) throws SQLException {
+    public List<CartItem> getCartItems(String userId) throws SQLException { // <--- METHOD NAME MATCHES SERVLET
         List<CartItem> cartItems = new ArrayList<>();
         // SQL to join Cart with Products to get product details
         String sql = "SELECT c.CartID, c.ProductID, c.Quantity, p.Name, p.Price, p.Stock, p.ImageURL, p.Brand " +
@@ -78,7 +78,7 @@ public class CartManager {
      * @throws InvalidQuantityException if quantity is not positive.
      * @throws NoQuantityLeftException if requested quantity exceeds stock.
      */
-    public void addItemToCart(String userId, String productId, int quantity)
+    public void addItemToCart(String userId, String productId, int quantity) // <--- METHOD NAME MATCHES SERVLET
             throws SQLException, InvalidQuantityException, NoQuantityLeftException {
         if (quantity <= 0) {
             throw new InvalidQuantityException("Quantity to add to cart must be positive.");
@@ -88,10 +88,13 @@ public class CartManager {
         if (product == null) {
             throw new SQLException("Product with ID " + productId + " not found.");
         }
-        if (product.getStock() < quantity) {
+        // Stock check logic here will be slightly different from my previous suggestion if using this version
+        // This version checks stock *before* checking if item is in cart
+        if (product.getStock() < quantity && findCartEntry(userId, productId) == null) { // Only for new items
             throw new NoQuantityLeftException("Not enough stock for " + product.getName() +
                                               ". Requested: " + quantity + ", Available: " + product.getStock());
         }
+
 
         Cart existingCartEntry = findCartEntry(userId, productId);
 
@@ -102,7 +105,7 @@ public class CartManager {
                  throw new NoQuantityLeftException("Not enough stock for " + product.getName() +
                                               " to increase quantity. Requested total: " + newQuantity + ", Available: " + product.getStock());
             }
-            updateCartItemQuantity(existingCartEntry.getCartId(), newQuantity);
+            updateCartItemQuantity(existingCartEntry.getCartId(), newQuantity); // This calls the other update method
             System.out.println("Updated CartID " + existingCartEntry.getCartId() + " to quantity " + newQuantity);
         } else {
             // New product for the cart
@@ -155,11 +158,12 @@ public class CartManager {
      * @throws InvalidQuantityException if newQuantity is not positive.
      * @throws NoQuantityLeftException if newQuantity exceeds available stock (requires fetching product stock).
      */
-    public void updateCartItemQuantity(String cartId, int newQuantity)
+    public void updateCartItemQuantity(String cartId, int newQuantity) // <--- THIS METHOD IS USED INTERNALLY AND BY SERVLET
             throws SQLException, InvalidQuantityException, NoQuantityLeftException {
         if (newQuantity <= 0) {
-            // If new quantity is 0 or less, it's better to call removeItemFromCart
-            throw new InvalidQuantityException("New quantity must be positive. To remove, use removeItemFromCart.");
+            // If new quantity is 0 or less, it's better to call removeItemFromCart explicitly from servlet
+            // For now, this version of CartManager expects positive quantities here.
+            throw new InvalidQuantityException("New quantity must be positive. To remove, use removeItemFromCart from the servlet if quantity is zero.");
         }
 
         // Before updating, check stock for the product associated with this cartId
@@ -205,7 +209,7 @@ public class CartManager {
      * @param cartId The ID of the cart entry to remove.
      * @throws SQLException if a database error occurs.
      */
-    public void removeItemFromCart(String cartId) throws SQLException {
+    public void removeItemFromCart(String cartId) throws SQLException { // <--- METHOD NAME MATCHES SERVLET
         String sql = "DELETE FROM Cart WHERE CartID = ?";
         try (Connection conn = DBUtil.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {

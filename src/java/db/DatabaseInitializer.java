@@ -1,270 +1,352 @@
+// src/java/db/DatabaseInitializer.java
 package db;
 
 import core.IdGenerator;
+import models.Category;
+// Product model is not directly used here for adding, but its structure is relevant
+// models.Product; 
+import models.User;
 import core.PasswordUtil;
-import models.User; // For UserRole enum
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
-import java.time.LocalDate; // For dummy product data
+import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.sql.Timestamp;
 
 public class DatabaseInitializer {
 
     public static void initializeDatabaseSchema() {
         if (!DBUtil.isConfigured()) {
-            String errorMsg = "Database connection is not configured. Cannot initialize schema.";
-            System.err.println(errorMsg);
-            throw new IllegalStateException(errorMsg);
+            System.out.println("DatabaseInitializer: DBUtil not configured. Skipping schema creation.");
+            throw new IllegalStateException("Database connection is not configured. Cannot initialize schema.");
         }
+        System.out.println("DatabaseInitializer: Initializing database schema (creating tables if they don't exist)...");
 
-        try (Connection conn = DBUtil.getConnection(); Statement stmt = conn.createStatement()) {
-            System.out.println("Starting database schema initialization...");
-
+        String[] createTableSQLs = {
             // Users Table
-            stmt.executeUpdate("CREATE TABLE IF NOT EXISTS Users (" +
-                    "UserID VARCHAR(50) PRIMARY KEY," +
-                    "FullName VARCHAR(255) NOT NULL," +
-                    "Email VARCHAR(255) NOT NULL UNIQUE," +
-                    "Password VARCHAR(255) NOT NULL," +
-                    "PhoneNumber VARCHAR(20)," +
-                    "Address TEXT," +
-                    "Role VARCHAR(50) NOT NULL CHECK (Role IN ('USER', 'ADMIN'))," +
-                    "RegistrationDate TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
-                    "ProfilePicture VARCHAR(255)" +
-                    ") ENGINE=InnoDB;");
-            System.out.println("Table 'Users' created or already exists.");
+            "CREATE TABLE IF NOT EXISTS Users (" +
+            "    UserID VARCHAR(50) PRIMARY KEY," +
+            "    FullName VARCHAR(100) NOT NULL," +
+            "    Email VARCHAR(100) NOT NULL UNIQUE," +
+            "    Password VARCHAR(255) NOT NULL," +
+            "    PhoneNumber VARCHAR(20)," +
+            "    Address TEXT," +
+            "    Role VARCHAR(20) NOT NULL CHECK (Role IN ('USER', 'ADMIN'))," +
+            "    RegistrationDate DATETIME NOT NULL," +
+            "    ProfilePictureURL VARCHAR(255)" +
+            ")",
 
             // Admins Table
-            stmt.executeUpdate("CREATE TABLE IF NOT EXISTS Admins (" +
-                    "AdminID VARCHAR(50) PRIMARY KEY," +
-                    "UserID VARCHAR(50) NOT NULL UNIQUE," +
-                    "Permissions TEXT," +
-                    "FOREIGN KEY (UserID) REFERENCES Users(UserID) ON DELETE CASCADE" +
-                    ") ENGINE=InnoDB;");
-            System.out.println("Table 'Admins' created or already exists.");
+            "CREATE TABLE IF NOT EXISTS Admins (" +
+            "    AdminID VARCHAR(50) PRIMARY KEY," +
+            "    UserID VARCHAR(50) NOT NULL UNIQUE," +
+            "    Permissions TEXT," +
+            "    FOREIGN KEY (UserID) REFERENCES Users(UserID) ON DELETE CASCADE" +
+            ")",
 
             // Categories Table
-            stmt.executeUpdate("CREATE TABLE IF NOT EXISTS Categories (" +
-                    "CategoryID VARCHAR(50) PRIMARY KEY," +
-                    "Name VARCHAR(255) NOT NULL UNIQUE" +
-                    ") ENGINE=InnoDB;");
-            System.out.println("Table 'Categories' created or already exists.");
-            // Add a default category if needed for dummy products
-            addCategoryIfNotExists(conn, "CAT_GEN_ELEC", "General Electronics");
+            "CREATE TABLE IF NOT EXISTS Categories (" +
+            "    CategoryID VARCHAR(50) PRIMARY KEY," +
+            "    Name VARCHAR(100) NOT NULL UNIQUE" +
+            ")",
 
             // Products Table
-            stmt.executeUpdate("CREATE TABLE IF NOT EXISTS Products (" +
-                    "ProductID VARCHAR(50) PRIMARY KEY," +
-                    "Name VARCHAR(255) NOT NULL," +
-                    "Brand VARCHAR(100)," +
-                    "Model VARCHAR(100)," +
-                    "Description TEXT," +
-                    "Price DECIMAL(10, 2) NOT NULL CHECK (Price >= 0)," +
-                    "Stock INT NOT NULL CHECK (Stock >= 0)," +
-                    "ManufactureDate DATE," +
-                    "CategoryID VARCHAR(50)," +
-                    "ImageURL VARCHAR(512)," +
-                    "FOREIGN KEY (CategoryID) REFERENCES Categories(CategoryID) ON DELETE SET NULL" +
-                    ") ENGINE=InnoDB;");
-            System.out.println("Table 'Products' created or already exists.");
+            "CREATE TABLE IF NOT EXISTS Products (" +
+            "    ProductID VARCHAR(50) PRIMARY KEY," +
+            "    Name VARCHAR(255) NOT NULL," +
+            "    Brand VARCHAR(100)," +
+            "    Model VARCHAR(100)," +
+            "    Description TEXT," +
+            "    Price DECIMAL(10, 2) NOT NULL CHECK (Price >= 0)," +
+            "    Stock INT NOT NULL CHECK (Stock >= 0)," +
+            "    ManufactureDate DATE," +
+            "    CategoryID VARCHAR(50)," +
+            "    ImageURL VARCHAR(255)," +
+            "    FOREIGN KEY (CategoryID) REFERENCES Categories(CategoryID) ON DELETE SET NULL" +
+            ")",
 
             // Cart Table
-            stmt.executeUpdate("CREATE TABLE IF NOT EXISTS Cart (" +
-                    "CartID VARCHAR(50) PRIMARY KEY," +
-                    "UserID VARCHAR(50) NOT NULL," +
-                    "ProductID VARCHAR(50) NOT NULL," +
-                    "Quantity INT NOT NULL CHECK (Quantity > 0)," +
-                    "AddedDate TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
-                    "FOREIGN KEY (UserID) REFERENCES Users(UserID) ON DELETE CASCADE," +
-                    "FOREIGN KEY (ProductID) REFERENCES Products(ProductID) ON DELETE CASCADE," +
-                    "UNIQUE KEY (UserID, ProductID)" +
-                    ") ENGINE=InnoDB;");
-            System.out.println("Table 'Cart' created or already exists.");
+            "CREATE TABLE IF NOT EXISTS Cart (" +
+            "    CartID VARCHAR(50) PRIMARY KEY," +
+            "    UserID VARCHAR(50) NOT NULL," +
+            "    ProductID VARCHAR(50) NOT NULL," +
+            "    Quantity INT NOT NULL CHECK (Quantity > 0)," +
+            "    AddedDate DATETIME DEFAULT CURRENT_TIMESTAMP," +
+            // "    PRIMARY KEY (CartID)," + // CartID is already PK
+            "    UNIQUE (UserID, ProductID)," +
+            "    FOREIGN KEY (UserID) REFERENCES Users(UserID) ON DELETE CASCADE," +
+            "    FOREIGN KEY (ProductID) REFERENCES Products(ProductID) ON DELETE CASCADE" +
+            ")",
 
             // Orders Table
-            stmt.executeUpdate("CREATE TABLE IF NOT EXISTS Orders (" +
-                    "OrderID VARCHAR(50) PRIMARY KEY," +
-                    "UserID VARCHAR(50)," +
-                    "OrderDate TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
-                    "TotalAmount DECIMAL(10, 2) NOT NULL CHECK (TotalAmount >= 0)," +
-                    "Status VARCHAR(50) DEFAULT 'PENDING'," +
-                    "ShippingAddress TEXT," +
-                    "FOREIGN KEY (UserID) REFERENCES Users(UserID) ON DELETE SET NULL" +
-                    ") ENGINE=InnoDB;");
-            System.out.println("Table 'Orders' created or already exists.");
+            "CREATE TABLE IF NOT EXISTS Orders (" +
+            "    OrderID VARCHAR(50) PRIMARY KEY," +
+            "    UserID VARCHAR(50)," +
+            "    OrderDate DATETIME NOT NULL," +
+            "    TotalAmount DECIMAL(12, 2) NOT NULL CHECK (TotalAmount >= 0)," +
+            "    ShippingAddress TEXT," +
+            "    OrderStatus VARCHAR(50) DEFAULT 'PENDING'," +
+            "    FOREIGN KEY (UserID) REFERENCES Users(UserID) ON DELETE SET NULL" +
+            ")",
 
             // OrderDetails Table
-            stmt.executeUpdate("CREATE TABLE IF NOT EXISTS OrderDetails (" +
-                    "OrderDetailID VARCHAR(50) PRIMARY KEY," +
-                    "OrderID VARCHAR(50) NOT NULL," +
-                    "ProductID VARCHAR(50)," +
-                    "ProductNameSnapshot VARCHAR(255) NOT NULL," +
-                    "Quantity INT NOT NULL CHECK (Quantity > 0)," +
-                    "PriceAtPurchase DECIMAL(10, 2) NOT NULL CHECK (PriceAtPurchase >= 0)," +
-                    "FOREIGN KEY (OrderID) REFERENCES Orders(OrderID) ON DELETE CASCADE," +
-                    "FOREIGN KEY (ProductID) REFERENCES Products(ProductID) ON DELETE SET NULL" +
-                    ") ENGINE=InnoDB;");
-            System.out.println("Table 'OrderDetails' created or already exists.");
-
-            // Payments Table
-            stmt.executeUpdate("CREATE TABLE IF NOT EXISTS Payments (" +
-                    "PaymentID VARCHAR(50) PRIMARY KEY," +
-                    "OrderID VARCHAR(50) NOT NULL," +
-                    "PaymentMethod VARCHAR(100)," +
-                    "TransactionID VARCHAR(255)," +
-                    "PaymentDate TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
-                    "Status VARCHAR(50) NOT NULL CHECK (Status IN ('PENDING', 'COMPLETED', 'FAILED', 'REFUNDED'))," +
-                    "FOREIGN KEY (OrderID) REFERENCES Orders(OrderID) ON DELETE CASCADE" +
-                    ") ENGINE=InnoDB;");
-            System.out.println("Table 'Payments' created or already exists.");
+            "CREATE TABLE IF NOT EXISTS OrderDetails (" +
+            "    OrderDetailID VARCHAR(50) PRIMARY KEY," +
+            "    OrderID VARCHAR(50) NOT NULL," +
+            "    ProductID VARCHAR(50)," +
+            "    ProductName VARCHAR(255) NOT NULL," +
+            "    Quantity INT NOT NULL CHECK (Quantity > 0)," +
+            "    PriceAtOrder DECIMAL(10, 2) NOT NULL CHECK (PriceAtOrder >= 0)," +
+            "    FOREIGN KEY (OrderID) REFERENCES Orders(OrderID) ON DELETE CASCADE," +
+            "    FOREIGN KEY (ProductID) REFERENCES Products(ProductID) ON DELETE SET NULL" +
+            ")",
 
             // Feedback Table
-            stmt.executeUpdate("CREATE TABLE IF NOT EXISTS Feedback (" +
-                    "FeedbackID VARCHAR(50) PRIMARY KEY," +
-                    "UserID VARCHAR(50)," +
-                    "ProductID VARCHAR(50)," +
-                    "Message TEXT," +
-                    "Rating INT CHECK (Rating >= 1 AND Rating <= 5)," +
-                    "Timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
-                    "FOREIGN KEY (UserID) REFERENCES Users(UserID) ON DELETE SET NULL," +
-                    "FOREIGN KEY (ProductID) REFERENCES Products(ProductID) ON DELETE SET NULL" +
-                    ") ENGINE=InnoDB;");
-            System.out.println("Table 'Feedback' created or already exists.");
+            "CREATE TABLE IF NOT EXISTS Feedback (" +
+            "    FeedbackID VARCHAR(50) PRIMARY KEY," +
+            "    UserID VARCHAR(50)," +
+            "    ProductID VARCHAR(50)," +
+            "    Message TEXT," +
+            "    Rating INT NOT NULL CHECK (Rating >= 1 AND Rating <= 5)," +
+            "    Timestamp DATETIME NOT NULL," +
+            "    FOREIGN KEY (UserID) REFERENCES Users(UserID) ON DELETE SET NULL," +
+            "    FOREIGN KEY (ProductID) REFERENCES Products(ProductID) ON DELETE SET NULL" +
+            ")",
 
-            // PurchaseHistory Table
-            stmt.executeUpdate("CREATE TABLE IF NOT EXISTS PurchaseHistory (" +
-                    "HistoryID VARCHAR(50) PRIMARY KEY," +
-                    "UserID VARCHAR(50) NOT NULL," +
-                    "OrderID VARCHAR(50) NOT NULL," +
-                    "PurchaseDate TIMESTAMP NOT NULL," +
-                    "FOREIGN KEY (UserID) REFERENCES Users(UserID) ON DELETE CASCADE," +
-                    "FOREIGN KEY (OrderID) REFERENCES Orders(OrderID) ON DELETE CASCADE" +
-                    ") ENGINE=InnoDB;");
-            System.out.println("Table 'PurchaseHistory' created or already exists.");
+            // Payments Table
+            "CREATE TABLE IF NOT EXISTS Payments (" +
+            "    PaymentID VARCHAR(50) PRIMARY KEY," +
+            "    OrderID VARCHAR(50) NOT NULL," +
+            "    PaymentMethod VARCHAR(100)," +
+            "    TransactionID VARCHAR(255)," +
+            "    PaymentDate DATETIME NOT NULL," +
+            "    Status VARCHAR(50) NOT NULL," +
+            "    FOREIGN KEY (OrderID) REFERENCES Orders(OrderID) ON DELETE CASCADE" +
+            ")",
+            
+            "CREATE TABLE IF NOT EXISTS PurchaseHistory (" +
+            "   HistoryID VARCHAR(50) PRIMARY KEY, " +
+            "   UserID VARCHAR(50), " +
+            "   OrderID VARCHAR(50) NOT NULL, " +
+            "   PurchaseDate DATETIME NOT NULL, " +
+            "   FOREIGN KEY (UserID) REFERENCES Users(UserID) ON DELETE SET NULL, " +
+            "   FOREIGN KEY (OrderID) REFERENCES Orders(OrderID) ON DELETE CASCADE" +
+            ")"
+        };
 
-            System.out.println("Schema initialization process completed.");
+        try (Connection conn = DBUtil.getConnection();
+             Statement stmt = conn.createStatement()) {
+            for (String sql : createTableSQLs) {
+                // System.out.println("Executing: " + sql.substring(0, Math.min(sql.length(), 100)) + "...");
+                stmt.executeUpdate(sql);
+            }
+            System.out.println("Database schema initialization: Tables created/verified successfully.");
 
-            // Add default users if they don't exist
-            addDefaultUserIfNotExists(conn, IdGenerator.DEFAULT_USER_ID, "Default User", "user@example.com", "password", User.UserRole.USER);
-            addDefaultAdminIfNotExists(conn, IdGenerator.DEFAULT_ADMIN_ID, "Default Admin", "admin@example.com", "adminpass", User.UserRole.ADMIN);
-
-            // Add dummy products
-            addProductIfNotExists(conn, IdGenerator.generateProductId(), "Demo Laptop Pro", "TechBrand", "LP-X1",
-                                  "A powerful laptop for professionals and gamers.", 1299.99, 15, LocalDate.now().minusMonths(2),
-                                  "CAT_GEN_ELEC", "https://via.placeholder.com/300x200.png?text=Laptop+Pro"); // Assuming CAT_GEN_ELEC exists
-
-            addProductIfNotExists(conn, IdGenerator.generateProductId(), "SmartPhone Basic", "ConnectAll", "SP-B50",
-                                  "Reliable and affordable smartphone for daily use.", 249.00, 50, LocalDate.now().minusMonths(1),
-                                  "CAT_GEN_ELEC", "https://via.placeholder.com/300x200.png?text=Smartphone");
-
-            addProductIfNotExists(conn, IdGenerator.generateProductId(), "Wireless Headphones", "SoundWave", "WH-700",
-                                  "Noise-cancelling over-ear headphones with great sound.", 149.95, 30, LocalDate.now().minusWeeks(2),
-                                  "CAT_GEN_ELEC", "https://via.placeholder.com/300x200.png?text=Headphones");
-
+            initializeSampleData(conn); // Pass connection to reuse
 
         } catch (SQLException e) {
-            String errorMsg = "Error initializing database schema: " + e.getMessage();
-            System.err.println(errorMsg);
+            System.err.println("Database schema initialization FAILED: " + e.getMessage());
             e.printStackTrace();
-            throw new RuntimeException(errorMsg, e);
+            throw new RuntimeException("Fatal: Could not initialize database schema.", e);
         }
     }
 
-    private static void addDefaultUserIfNotExists(Connection conn, String userId, String fullName, String email, String password, User.UserRole role) throws SQLException {
-        String checkUserSql = "SELECT COUNT(*) FROM Users WHERE UserID = ? OR Email = ?";
-        try (PreparedStatement checkPstmt = conn.prepareStatement(checkUserSql)) {
-            checkPstmt.setString(1, userId);
-            checkPstmt.setString(2, email);
-            try (ResultSet rs = checkPstmt.executeQuery()) {
-                if (rs.next() && rs.getInt(1) == 0) {
-                    String insertUserSql = "INSERT INTO Users (UserID, FullName, Email, Password, Role, RegistrationDate) VALUES (?, ?, ?, ?, ?, ?)";
-                    try (PreparedStatement insertPstmt = conn.prepareStatement(insertUserSql)) {
-                        insertPstmt.setString(1, userId);
-                        insertPstmt.setString(2, fullName);
-                        insertPstmt.setString(3, email);
-                        insertPstmt.setString(4, PasswordUtil.hashPassword(password));
-                        insertPstmt.setString(5, role.name());
-                        insertPstmt.setTimestamp(6, Timestamp.valueOf(LocalDateTime.now()));
-                        insertPstmt.executeUpdate();
-                        System.out.println("Default user '" + fullName + "' added.");
+    // Overload to accept connection or get its own
+    public static void initializeSampleData() {
+         if (!DBUtil.isConfigured()) {
+            System.out.println("DatabaseInitializer: DBUtil not configured. Skipping sample data initialization.");
+            return;
+        }
+        try(Connection conn = DBUtil.getConnection()) {
+            initializeSampleData(conn);
+        } catch (SQLException e) {
+            System.err.println("DatabaseInitializer: Error getting connection for sample data: " + e.getMessage());
+        }
+    }
 
-                        if (role == User.UserRole.ADMIN) {
-                            String adminId = IdGenerator.generateAdminId();
-                            String insertAdminSql = "INSERT INTO Admins (AdminID, UserID, Permissions) VALUES (?, ?, ?)";
-                            try (PreparedStatement insertAdminPstmt = conn.prepareStatement(insertAdminSql)) {
-                                insertAdminPstmt.setString(1, adminId);
-                                insertAdminPstmt.setString(2, userId);
-                                insertAdminPstmt.setString(3, "ALL");
-                                insertAdminPstmt.executeUpdate();
-                                System.out.println("Default admin role setup for UserID: " + userId);
-                            }
-                        }
-                    }
-                } else {
-                    System.out.println("Default user '" + fullName + "' or email '" + email + "' already exists or error checking.");
+
+    public static void initializeSampleData(Connection conn) { // Accepts a connection
+        System.out.println("DatabaseInitializer: Checking and initializing sample data if needed...");
+        boolean originalAutoCommit = false;
+        try {
+            originalAutoCommit = conn.getAutoCommit();
+            conn.setAutoCommit(false);
+
+            if (sampleDataExists(conn)) {
+                System.out.println("DatabaseInitializer: Sample data appears to exist. Skipping re-initialization.");
+                conn.rollback(); // Nothing to commit
+                return;
+            }
+
+            Category catLaptops = addCategoryIfNotExists(conn, "CAT_LAPTOP", "Laptops");
+            Category catSmartphones = addCategoryIfNotExists(conn, "CAT_SMARTPHONE", "Smartphones");
+            Category catAccessories = addCategoryIfNotExists(conn, "CAT_ACCESSORY", "Accessories");
+            Category catGenElec = addCategoryIfNotExists(conn, "CAT_GEN_ELEC", "General Electronics"); // Default/Fallback
+
+            addProductIfNotExists(conn, "PROD_LP001", "Demo Laptop Pro", "TechBrand", "Model X1",
+                "A powerful and versatile laptop.", 1299.99, 15, LocalDate.now().minusMonths(3),
+                catLaptops != null ? catLaptops.getCategoryId() : catGenElec.getCategoryId(), "images/default_product.png");
+
+            addProductIfNotExists(conn, "PROD_SP001", "SmartPhone Basic", "ConnectAll", "C1",
+                "An affordable smartphone with essential features.", 249.00, 50, LocalDate.now().minusMonths(1),
+                catSmartphones != null ? catSmartphones.getCategoryId() : catGenElec.getCategoryId(), "images/default_product.png");
+
+            addProductIfNotExists(conn, "PROD_AC001", "Wireless Ergonomic Mouse", "ClickTech", "ErgoM",
+                "Comfortable wireless mouse.", 29.99, 75, LocalDate.now().minusDays(45),
+                catAccessories != null ? catAccessories.getCategoryId() : catGenElec.getCategoryId(), "images/default_product.png");
+            
+            addProductIfNotExists(conn, "PROD_AC002", "RGB Gaming Keyboard", "GamerGear", "StrikePro",
+                "Mechanical gaming keyboard with RGB.", 89.50, 30, LocalDate.now().minusDays(20),
+                 catAccessories != null ? catAccessories.getCategoryId() : catGenElec.getCategoryId(), "images/default_product.png");
+
+
+            addDemoUserIfNotExists(conn, IdGenerator.DEFAULT_USER_ID, "Default User", "user@example.com",
+                    PasswordUtil.hashPassword("password"), null, null, User.UserRole.USER,
+                    LocalDateTime.now().minusDays(10), null);
+
+            addDemoUserIfNotExists(conn, IdGenerator.DEFAULT_ADMIN_ID, "Default Admin", "admin@example.com",
+                    PasswordUtil.hashPassword("adminpass"), null, null, User.UserRole.ADMIN,
+                    LocalDateTime.now().minusDays(10), null);
+            
+            addAdminRoleLinkIfNotExists(conn, IdGenerator.DEFAULT_ADMIN_ID);
+
+            conn.commit();
+            System.out.println("DatabaseInitializer: Sample data initialization completed successfully.");
+
+        } catch (SQLException e) {
+            System.err.println("DatabaseInitializer: Error during sample data initialization: " + e.getMessage());
+            e.printStackTrace();
+            try {
+                if (conn != null && !conn.getAutoCommit()) { // Check if still in transaction
+                    conn.rollback();
+                    System.err.println("DatabaseInitializer: Transaction rolled back due to error.");
                 }
+            } catch (SQLException ex) {
+                System.err.println("DatabaseInitializer: Error rolling back transaction: " + ex.getMessage());
+            }
+        } finally {
+             try {
+                if (conn != null) conn.setAutoCommit(originalAutoCommit); // Restore original auto-commit state
+            } catch (SQLException ex) {
+                System.err.println("DatabaseInitializer: Error restoring auto-commit state: " + ex.getMessage());
             }
         }
     }
 
-    private static void addDefaultAdminIfNotExists(Connection conn, String userId, String fullName, String email, String password, User.UserRole role) throws SQLException {
-        addDefaultUserIfNotExists(conn, userId, fullName, email, password, role);
+    private static boolean sampleDataExists(Connection conn) throws SQLException {
+        String sql = "SELECT COUNT(*) FROM Products WHERE ProductID = ?";
+        try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setString(1, "PROD_LP001"); // Check for one known sample product
+            try (ResultSet rs = pstmt.executeQuery()) {
+                return rs.next() && rs.getInt(1) > 0;
+            }
+        }
     }
 
-    private static void addCategoryIfNotExists(Connection conn, String categoryId, String categoryName) throws SQLException {
-        String checkSql = "SELECT COUNT(*) FROM Categories WHERE CategoryID = ? OR Name = ?";
-        try (PreparedStatement checkPstmt = conn.prepareStatement(checkSql)) {
-            checkPstmt.setString(1, categoryId);
-            checkPstmt.setString(2, categoryName);
-            try (ResultSet rs = checkPstmt.executeQuery()) {
-                if (rs.next() && rs.getInt(1) == 0) {
-                    String insertSql = "INSERT INTO Categories (CategoryID, Name) VALUES (?, ?)";
-                    try (PreparedStatement insertPstmt = conn.prepareStatement(insertSql)) {
-                        insertPstmt.setString(1, categoryId);
-                        insertPstmt.setString(2, categoryName);
-                        insertPstmt.executeUpdate();
-                        System.out.println("Default category '" + categoryName + "' added.");
-                    }
-                } else {
-                     System.out.println("Default category '" + categoryName + "' already exists or error checking.");
+    private static Category addCategoryIfNotExists(Connection conn, String categoryId, String name) throws SQLException {
+        String checkSql = "SELECT Name FROM Categories WHERE CategoryID = ?";
+        try (PreparedStatement pstmt = conn.prepareStatement(checkSql)) {
+            pstmt.setString(1, categoryId);
+            try (ResultSet rs = pstmt.executeQuery()) {
+                if (rs.next()) {
+                    System.out.println("Category '" + rs.getString("Name") + "' (ID: " + categoryId + ") already exists. Skipping.");
+                    return new Category(categoryId, rs.getString("Name"));
                 }
             }
+        }
+        String insertSql = "INSERT INTO Categories (CategoryID, Name) VALUES (?, ?)";
+        try (PreparedStatement pstmt = conn.prepareStatement(insertSql)) {
+            pstmt.setString(1, categoryId);
+            pstmt.setString(2, name);
+            pstmt.executeUpdate();
+            System.out.println("Added sample category: " + name);
+            return new Category(categoryId, name);
         }
     }
 
     private static void addProductIfNotExists(Connection conn, String productId, String name, String brand, String model,
-                                             String description, double price, int stock, LocalDate mfgDate,
-                                             String categoryId, String imageUrl) throws SQLException {
-        String checkSql = "SELECT COUNT(*) FROM Products WHERE ProductID = ?";
-        try (PreparedStatement checkPstmt = conn.prepareStatement(checkSql)) {
-            checkPstmt.setString(1, productId);
-            try (ResultSet rs = checkPstmt.executeQuery()) {
-                if (rs.next() && rs.getInt(1) == 0) {
-                    String insertSql = "INSERT INTO Products (ProductID, Name, Brand, Model, Description, Price, Stock, ManufactureDate, CategoryID, ImageURL) " +
-                                       "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-                    try (PreparedStatement insertPstmt = conn.prepareStatement(insertSql)) {
-                        insertPstmt.setString(1, productId);
-                        insertPstmt.setString(2, name);
-                        insertPstmt.setString(3, brand);
-                        insertPstmt.setString(4, model);
-                        insertPstmt.setString(5, description);
-                        insertPstmt.setDouble(6, price);
-                        insertPstmt.setInt(7, stock);
-                        insertPstmt.setDate(8, mfgDate != null ? java.sql.Date.valueOf(mfgDate) : null);
-                        insertPstmt.setString(9, categoryId);
-                        insertPstmt.setString(10, imageUrl);
-                        insertPstmt.executeUpdate();
-                        System.out.println("Default product '" + name + "' added.");
-                    }
-                } else {
-                    System.out.println("Default product '" + name + "' (ID: " + productId + ") already exists or error checking.");
+                                           String description, double price, int stock, LocalDate mfgDate,
+                                           String categoryId, String imageUrl) throws SQLException {
+        String checkSql = "SELECT Name FROM Products WHERE ProductID = ?";
+        try (PreparedStatement pstmt = conn.prepareStatement(checkSql)) {
+            pstmt.setString(1, productId);
+            try (ResultSet rs = pstmt.executeQuery()) {
+                if (rs.next()) {
+                    System.out.println("Product '" + rs.getString("Name") + "' (ID: " + productId + ") already exists. Skipping.");
+                    return;
                 }
             }
+        }
+        String insertSql = "INSERT INTO Products (ProductID, Name, Brand, Model, Description, Price, Stock, ManufactureDate, CategoryID, ImageURL) " +
+                           "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        try (PreparedStatement pstmt = conn.prepareStatement(insertSql)) {
+            pstmt.setString(1, productId);
+            pstmt.setString(2, name);
+            pstmt.setString(3, brand);
+            pstmt.setString(4, model);
+            pstmt.setString(5, description);
+            pstmt.setDouble(6, price);
+            pstmt.setInt(7, stock);
+            pstmt.setDate(8, mfgDate != null ? java.sql.Date.valueOf(mfgDate) : null);
+            pstmt.setString(9, categoryId);
+            pstmt.setString(10, imageUrl);
+            pstmt.executeUpdate();
+            System.out.println("Added sample product: " + name);
+        }
+    }
+
+    private static void addDemoUserIfNotExists(Connection conn, String userId, String fullName, String email,
+                                        String hashedPassword, String phoneNumber, String address,
+                                        User.UserRole role, LocalDateTime registrationDate, String profilePicture) throws SQLException {
+        String checkSql = "SELECT FullName FROM Users WHERE UserID = ? OR Email = ?";
+        try (PreparedStatement pstmt = conn.prepareStatement(checkSql)) {
+            pstmt.setString(1, userId);
+            pstmt.setString(2, email);
+            try (ResultSet rs = pstmt.executeQuery()) {
+                if (rs.next()) {
+                    System.out.println("User '" + rs.getString("FullName") + "' (ID: " + userId + "/Email: " + email + ") already exists. Skipping.");
+                    return;
+                }
+            }
+        }
+        String insertSql = "INSERT INTO Users (UserID, FullName, Email, Password, PhoneNumber, Address, Role, RegistrationDate, ProfilePictureURL) " +
+                           "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        try (PreparedStatement pstmt = conn.prepareStatement(insertSql)) {
+            pstmt.setString(1, userId);
+            pstmt.setString(2, fullName);
+            pstmt.setString(3, email);
+            pstmt.setString(4, hashedPassword);
+            pstmt.setString(5, phoneNumber);
+            pstmt.setString(6, address);
+            pstmt.setString(7, role.name());
+            pstmt.setTimestamp(8, java.sql.Timestamp.valueOf(registrationDate));
+            pstmt.setString(9, profilePicture);
+            pstmt.executeUpdate();
+            System.out.println("Added demo user: " + fullName + " with role " + role.name());
+        }
+    }
+
+    private static void addAdminRoleLinkIfNotExists(Connection conn, String userId) throws SQLException {
+        String checkAdminSql = "SELECT AdminID FROM Admins WHERE UserID = ?";
+        try (PreparedStatement pstmt = conn.prepareStatement(checkAdminSql)) {
+            pstmt.setString(1, userId);
+            try (ResultSet rs = pstmt.executeQuery()) {
+                if (rs.next()) {
+                    System.out.println("Admin role link for UserID '" + userId + "' already exists. Skipping.");
+                    return;
+                }
+            }
+        }
+        String insertAdminSql = "INSERT INTO Admins (AdminID, UserID, Permissions) VALUES (?, ?, ?)";
+        try (PreparedStatement pstmt = conn.prepareStatement(insertAdminSql)) {
+            pstmt.setString(1, IdGenerator.generateAdminId());
+            pstmt.setString(2, userId);
+            pstmt.setString(3, "ALL");
+            pstmt.executeUpdate();
+            System.out.println("Added Admin role link for UserID: " + userId);
         }
     }
 }
