@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Context>
+    <!-- 
+        TechTroveWebApp Context Configuration.
+        The context path is typically derived from the WAR file name (e.g., TechTroveWebApp.war -> /TechTroveWebApp)
+        or can be explicitly set during deployment or in server-specific descriptors.
+        For defining JNDI resources like DataSources for GlassFish,
+        it's often preferred to use glassfish-web.xml or the GlassFish Admin Console.
+    -->
+</Context>

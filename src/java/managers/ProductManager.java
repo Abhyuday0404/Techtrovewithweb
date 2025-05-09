@@ -1,13 +1,15 @@
-// Place in: src/java/managers/ProductManager.java
 package managers;
 
 import db.DBUtil;
 import models.Product;
+import core.IdGenerator; // Added import
+
 import java.sql.*;
 import java.util.ArrayList;
 import java.util.List;
 
 public class ProductManager {
+
     public ProductManager() throws SQLException {
         // Constructor can be empty or initialize things if needed
         // Ensure DBUtil can provide a connection when methods are called
@@ -40,7 +42,7 @@ public class ProductManager {
         }
         return product;
     }
-    
+
     public List<Product> searchProductsByName(String searchTerm) throws SQLException {
         List<Product> products = new ArrayList<>();
         String sql = "SELECT * FROM Products WHERE Name LIKE ? ORDER BY Name";
@@ -55,12 +57,6 @@ public class ProductManager {
         }
         return products;
     }
-
-
-    // Add CRUD methods here from your Part 1: addProduct, updateProduct, deleteProduct
-    // public void addProduct(...) throws SQLException { ... }
-    // public boolean updateProduct(...) throws SQLException { ... }
-    // public boolean deleteProduct(...) throws SQLException { ... }
 
     private Product mapResultSetToProduct(ResultSet rs) throws SQLException {
         java.sql.Date sqlMfgDate = rs.getDate("ManufactureDate");
@@ -77,9 +73,13 @@ public class ProductManager {
             rs.getString("ImageURL")
         );
     }
-    // Add these methods to your existing src/java/managers/ProductManager.java
 
     public void addProduct(Product product) throws SQLException {
+        // If ProductID is not set by the caller, generate one
+        if (product.getProductId() == null || product.getProductId().trim().isEmpty()) {
+            product.setProductId(IdGenerator.generateProductId());
+        }
+
         String sql = "INSERT INTO Products (ProductID, Name, Brand, Model, Description, Price, Stock, ManufactureDate, CategoryID, ImageURL) " +
                      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
         try (Connection conn = DBUtil.getConnection();
@@ -95,7 +95,7 @@ public class ProductManager {
             pstmt.setString(9, product.getCategoryId());
             pstmt.setString(10, product.getImageUrl());
             pstmt.executeUpdate();
-            System.out.println("Product added: " + product.getName());
+            System.out.println("Product added: " + product.getName() + " (ID: " + product.getProductId() + ")");
         }
     }
 
@@ -115,7 +115,9 @@ public class ProductManager {
             pstmt.setString(9, product.getImageUrl());
             pstmt.setString(10, product.getProductId());
             int rowsAffected = pstmt.executeUpdate();
-            if (rowsAffected > 0) System.out.println("Product updated: " + product.getName());
+            if (rowsAffected > 0) {
+                System.out.println("Product updated: " + product.getName());
+            }
             return rowsAffected > 0;
         }
     }
@@ -130,7 +132,9 @@ public class ProductManager {
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
             pstmt.setString(1, productId);
             int rowsAffected = pstmt.executeUpdate();
-            if (rowsAffected > 0) System.out.println("Product deleted: " + productId);
+            if (rowsAffected > 0) {
+                System.out.println("Product deleted: " + productId);
+            }
             return rowsAffected > 0;
         }
     }

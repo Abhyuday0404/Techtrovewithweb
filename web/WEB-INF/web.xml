@@ -26,32 +26,66 @@
         <url-pattern>/DatabaseSetupServlet</url-pattern>
     </servlet-mapping>
 
+    <!-- Configure JSP Compiler for Java 1.8 -->
+    <!-- This configuration is for Jasper (Tomcat's JSP engine).
+         GlassFish uses its own JSP engine but often respects similar parameters
+         or has its own way to configure this (e.g., in glassfish-web.xml or admin console).
+         However, this standard approach is good to have. -->
+    <servlet>
+        <servlet-name>jsp</servlet-name>
+        <servlet-class>org.apache.jasper.servlet.JspServlet</servlet-class>
+        <init-param>
+            <param-name>compilerSourceVM</param-name>
+            <param-value>1.8</param-value>
+        </init-param>
+        <init-param>
+            <param-name>compilerTargetVM</param-name>
+            <param-value>1.8</param-value>
+        </init-param>
+        <init-param>
+            <param-name>fork</param-name>
+            <param-value>false</param-value> <!-- Set to true if you encounter memory issues during JSP compilation -->
+        </init-param>
+        <load-on-startup>3</load-on-startup>
+    </servlet>
+    <!-- The mapping for *.jsp is often implicitly handled by the container,
+         but explicitly defining it can sometimes help if using custom JSP servlet params. -->
+    <servlet-mapping>
+        <servlet-name>jsp</servlet-name>
+        <url-pattern>*.jsp</url-pattern>
+        <url-pattern>*.jspx</url-pattern> <!-- If you use JSPX files -->
+    </servlet-mapping>
+    <!-- End JSP Compiler Configuration -->
+
+
     <!-- Session Configuration -->
     <session-config>
-        <session-timeout>30</session-timeout>
+        <session-timeout>30</session-timeout> <!-- Session timeout in minutes -->
     </session-config>
-    
+
+    <!-- Authentication Filter -->
     <filter>
         <filter-name>AuthenticationFilter</filter-name>
         <filter-class>app.filters.AuthenticationFilter</filter-class>
     </filter>
     <filter-mapping>
         <filter-name>AuthenticationFilter</filter-name>
-        <url-pattern>/*</url-pattern>
+        <url-pattern>/*</url-pattern> <!-- Apply to all requests -->
     </filter-mapping>
-    
-    <!-- Error Page for general exceptions (optional, but good practice) -->
+
+    <!-- Error Page Configuration -->
     <error-page>
         <exception-type>java.lang.Throwable</exception-type>
-        <location>/WEB-INF/jsp/error.jsp</location> <!-- Ensure this path is correct -->
+        <location>/WEB-INF/jsp/error.jsp</location>
     </error-page>
     <error-page>
-        <error-code>404</error-code>
-        <location>/WEB-INF/jsp/error.jsp</location> <!-- Ensure this path is correct -->
+        <error-code>404</error-code> <!-- Not Found -->
+        <location>/WEB-INF/jsp/error.jsp</location>
     </error-page>
     <error-page>
-        <error-code>500</error-code>
-        <location>/WEB-INF/jsp/error.jsp</location> <!-- Ensure this path is correct -->
+        <error-code>500</error-code> <!-- Internal Server Error -->
+        <location>/WEB-INF/jsp/error.jsp</location>
     </error-page>
+    <!-- You can add more specific error codes if needed -->
 
 </web-app>

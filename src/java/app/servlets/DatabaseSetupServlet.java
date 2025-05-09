@@ -1,3 +1,4 @@
+// src/java/app/servlets/DatabaseSetupServlet.java
 package app.servlets;
 
 import db.DBUtil;
@@ -6,6 +7,7 @@ import db.DatabaseInitializer;
 import java.io.IOException;
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.sql.Statement;
 import javax.servlet.ServletContext;
 import javax.servlet.ServletException;
 import javax.servlet.annotation.WebServlet;
@@ -22,66 +24,79 @@ public class DatabaseSetupServlet extends HttpServlet {
 
         String host = request.getParameter("db_host");
         String port = request.getParameter("db_port");
-        String dbName = request.getParameter("db_name");
+        String dbNameParam = request.getParameter("db_name");
         String user = request.getParameter("db_user");
         String password = request.getParameter("db_password");
 
         ServletContext context = getServletContext();
-        String redirectPage = "db_setup.jsp"; // Default back to setup page
+        String redirectPage = "db_setup.jsp";
 
         if (host == null || host.trim().isEmpty() ||
             port == null || port.trim().isEmpty() ||
-            dbName == null || dbName.trim().isEmpty() ||
+            dbNameParam == null || dbNameParam.trim().isEmpty() ||
             user == null || user.trim().isEmpty()) {
-            // Password can be empty for some MySQL setups, so not checking it for emptiness here explicitly as a requirement
             response.sendRedirect(redirectPage + "?error=missing_params");
             return;
         }
 
         try {
-            System.out.println("DatabaseSetupServlet: Configuring DBUtil...");
-            DBUtil.configureConnection(host, port, user, password, dbName);
-            System.out.println("DatabaseSetupServlet: DBUtil configured. Attempting to test connection...");
+            // 1. Connect to MySQL server (without specifying a database) to create the database
+            System.out.println("DatabaseSetupServlet: Attempting to connect to MySQL server...");
+            try (Connection serverConn = DBUtil.getServerConnection(host, port, user, password);
+                 Statement stmt = serverConn.createStatement()) {
+                System.out.println("DatabaseSetupServlet: Connected to MySQL server. Creating database if not exists: " + dbNameParam);
+                stmt.executeUpdate("CREATE DATABASE IF NOT EXISTS `" + dbNameParam + "`");
+                System.out.println("DatabaseSetupServlet: Database '" + dbNameParam + "' ensured/created.");
+            } catch (SQLException e) {
+                System.err.println("DatabaseSetupServlet: Error creating database '" + dbNameParam + "': " + e.getMessage());
+                e.printStackTrace();
+                request.setAttribute("dbErrorMsg", "Failed to create database: " + e.getMessage());
+                DBUtil.resetConfiguration();
+                context.setAttribute("dbConfigNeeded", true);
+                response.sendRedirect(redirectPage + "?error=db_creation_failed");
+                return;
+            }
 
-            // Test connection
-            try (Connection conn = DBUtil.getConnection()) {
-                if (conn != null && !conn.isClosed()) {
-                    System.out.println("DatabaseSetupServlet: Connection test successful!");
-                    context.setAttribute("dbConfigNeeded", false); // Update context attribute
+            // 2. Configure DBUtil to use the specified (and now existing) database
+            System.out.println("DatabaseSetupServlet: Configuring DBUtil for database: " + dbNameParam);
+            DBUtil.configureConnection(host, port, user, password, dbNameParam); // This sets up the full JDBC_URL
 
-                    // Now attempt to initialize schema
+            // 3. Test connection to the specific database
+            System.out.println("DatabaseSetupServlet: Attempting to test connection to database '" + dbNameParam + "'...");
+            try (Connection dbConn = DBUtil.getConnection()) {
+                if (dbConn != null && !dbConn.isClosed()) {
+                    System.out.println("DatabaseSetupServlet: Connection test to database '" + dbNameParam + "' successful!");
+                    context.setAttribute("dbConfigNeeded", false);
+
+                    // 4. Initialize schema (create tables)
                     System.out.println("DatabaseSetupServlet: Initializing database schema...");
-                    DatabaseInitializer.initializeDatabaseSchema();
+                    DatabaseInitializer.initializeDatabaseSchema(); // Uses DBUtil.getConnection()
                     System.out.println("DatabaseSetupServlet: Database schema initialized successfully.");
                     context.setAttribute("dbInitialized", true);
-                    context.removeAttribute("dbInitializationFailed"); // Clear any previous failure flag
+                    context.removeAttribute("dbInitializationFailed");
                     context.removeAttribute("dbInitializationError");
 
-                    // Redirect to setup page with success message, which will then redirect to login
                     redirectPage = "db_setup.jsp?success=configured";
                 } else {
-                    System.err.println("DatabaseSetupServlet: Connection test failed (conn is null or closed).");
-                    request.setAttribute("dbErrorMsg", "Connection test failed. Connection object was null or closed.");
-                    DBUtil.configureConnection(null,null,null,null,null); // Reset configuration on failure
-                    context.setAttribute("dbConfigNeeded", true);
-                    redirectPage = "db_setup.jsp?error=connection_failed";
+                    throw new SQLException("Connection test failed (conn is null or closed after configuration).");
                 }
             }
 
         } catch (SQLException e) {
             System.err.println("DatabaseSetupServlet: SQLException during setup: " + e.getMessage());
             e.printStackTrace();
-            request.setAttribute("dbErrorMsg", e.getMessage());
-            DBUtil.configureConnection(null,null,null,null,null); // Reset configuration on failure
+            request.setAttribute("dbErrorMsg", "DB Setup Error: " + e.getMessage());
+            DBUtil.resetConfiguration();
             context.setAttribute("dbConfigNeeded", true);
             redirectPage = "db_setup.jsp?error=connection_failed";
-        } catch (IllegalStateException e) { // Catch if DBUtil was already configured differently or not at all
+        } catch (IllegalStateException e) {
             System.err.println("DatabaseSetupServlet: IllegalStateException: " + e.getMessage());
-             request.setAttribute("dbErrorMsg", e.getMessage());
+            e.printStackTrace();
+            request.setAttribute("dbErrorMsg", "Configuration Error: " + e.getMessage());
+            DBUtil.resetConfiguration();
             context.setAttribute("dbConfigNeeded", true);
-            redirectPage = "db_setup.jsp?error=connection_failed";
-        }
-         catch (RuntimeException e) { // Catch schema initialization failure
+            redirectPage = "db_setup.jsp?error=config_error";
+        } catch (RuntimeException e) { // Catch schema initialization failure
             System.err.println("DatabaseSetupServlet: RuntimeException (likely schema init failure): " + e.getMessage());
             e.printStackTrace();
             request.setAttribute("dbErrorMsg", "Schema initialization failed: " + e.getMessage());
@@ -93,15 +108,12 @@ public class DatabaseSetupServlet extends HttpServlet {
         }
 
         System.out.println("DatabaseSetupServlet: Redirecting to " + redirectPage);
-        // Use sendRedirect for GET requests (clears form POST data)
         response.sendRedirect(redirectPage);
     }
 
     @Override
     protected void doGet(HttpServletRequest request, HttpServletResponse response)
             throws ServletException, IOException {
-        // Forward to the JSP page if accessed via GET (e.g. direct URL or refresh)
-        // This simply shows the form again. The main logic is in POST.
         System.out.println("DatabaseSetupServlet: GET request, forwarding to db_setup.jsp");
         request.getRequestDispatcher("/db_setup.jsp").forward(request, response);
     }
@@ -114,6 +126,6 @@ public class DatabaseSetupServlet extends HttpServlet {
 
     @Override
     public String getServletInfo() {
-        return "Handles initial database connection setup and schema initialization.";
+        return "Handles initial database connection setup, database creation, and schema initialization.";
     }
 }
