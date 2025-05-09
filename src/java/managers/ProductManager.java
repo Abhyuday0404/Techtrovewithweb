@@ -1,8 +1,9 @@
+// src/java/managers/ProductManager.java
 package managers;
 
 import db.DBUtil;
 import models.Product;
-import core.IdGenerator; // Ensure this import is present
+import core.IdGenerator; 
 
 import java.sql.*;
 import java.util.ArrayList;
@@ -11,13 +12,12 @@ import java.util.List;
 public class ProductManager {
 
     public ProductManager() throws SQLException {
-        // Constructor can be empty or initialize things if needed
-        // Ensure DBUtil can provide a connection when methods are called
+        // Constructor
     }
 
     public List<Product> getAllProducts() throws SQLException {
         List<Product> products = new ArrayList<>();
-        String sql = "SELECT * FROM Products ORDER BY Name";
+        String sql = "SELECT * FROM Products ORDER BY Name"; // ImageURL no longer selected
         try (Connection conn = DBUtil.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql);
              ResultSet rs = pstmt.executeQuery()) {
@@ -30,7 +30,7 @@ public class ProductManager {
 
     public Product getProductById(String productId) throws SQLException {
         Product product = null;
-        String sql = "SELECT * FROM Products WHERE ProductID = ?";
+        String sql = "SELECT * FROM Products WHERE ProductID = ?"; // ImageURL no longer selected
         try (Connection conn = DBUtil.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
             pstmt.setString(1, productId);
@@ -45,7 +45,7 @@ public class ProductManager {
 
     public List<Product> searchProductsByName(String searchTerm) throws SQLException {
         List<Product> products = new ArrayList<>();
-        String sql = "SELECT * FROM Products WHERE Name LIKE ? ORDER BY Name";
+        String sql = "SELECT * FROM Products WHERE Name LIKE ? ORDER BY Name"; // ImageURL no longer selected
         try (Connection conn = DBUtil.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
             pstmt.setString(1, "%" + searchTerm + "%");
@@ -69,29 +69,21 @@ public class ProductManager {
             rs.getDouble("Price"),
             rs.getInt("Stock"),
             (sqlMfgDate != null) ? sqlMfgDate.toLocalDate() : null,
-            rs.getString("CategoryID"),
-            rs.getString("ImageURL")
+            rs.getString("CategoryID")
+            // rs.getString("ImageURL") // REMOVED
         );
     }
 
     public void addProduct(Product product) throws SQLException {
-        // Ensure ProductID is set before inserting.
-        // The Product object might have been created with a null ID.
         if (product.getProductId() == null || product.getProductId().trim().isEmpty()) {
-            product.setProductId(IdGenerator.generateProductId()); // Use the setter in Product model
-        } else {
-            // If an ID was somehow passed, ensure it's not just whitespace (though Product constructor might catch this too)
-             if (product.getProductId().trim().isEmpty()) {
-                 // This case should ideally be caught by Product.setProductId if it's called with empty string
-                 throw new SQLException("Product ID was provided but is empty or whitespace.");
-             }
+            product.setProductId(IdGenerator.generateProductId());
         }
-
-        String sql = "INSERT INTO Products (ProductID, Name, Brand, Model, Description, Price, Stock, ManufactureDate, CategoryID, ImageURL) " +
-                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        // SQL and PreparedStatement updated
+        String sql = "INSERT INTO Products (ProductID, Name, Brand, Model, Description, Price, Stock, ManufactureDate, CategoryID) " +
+                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"; // ImageURL column removed
         try (Connection conn = DBUtil.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
-            pstmt.setString(1, product.getProductId()); // Now guaranteed to be non-null and non-empty
+            pstmt.setString(1, product.getProductId()); 
             pstmt.setString(2, product.getName());
             pstmt.setString(3, product.getBrand());
             pstmt.setString(4, product.getModel());
@@ -100,7 +92,7 @@ public class ProductManager {
             pstmt.setInt(7, product.getStock());
             pstmt.setDate(8, product.getManufactureDate() != null ? java.sql.Date.valueOf(product.getManufactureDate()) : null);
             pstmt.setString(9, product.getCategoryId());
-            pstmt.setString(10, product.getImageUrl());
+            // pstmt.setString(10, product.getImageUrl()); // REMOVED
             pstmt.executeUpdate();
             System.out.println("Product added: " + product.getName() + " (ID: " + product.getProductId() + ")");
         }
@@ -110,8 +102,9 @@ public class ProductManager {
         if (product.getProductId() == null || product.getProductId().trim().isEmpty()) {
             throw new SQLException("Product ID cannot be null or empty for an update operation.");
         }
+        // SQL and PreparedStatement updated
         String sql = "UPDATE Products SET Name = ?, Brand = ?, Model = ?, Description = ?, Price = ?, " +
-                     "Stock = ?, ManufactureDate = ?, CategoryID = ?, ImageURL = ? WHERE ProductID = ?";
+                     "Stock = ?, ManufactureDate = ?, CategoryID = ? WHERE ProductID = ?"; // ImageURL removed
         try (Connection conn = DBUtil.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
             pstmt.setString(1, product.getName());
@@ -122,8 +115,8 @@ public class ProductManager {
             pstmt.setInt(6, product.getStock());
             pstmt.setDate(7, product.getManufactureDate() != null ? java.sql.Date.valueOf(product.getManufactureDate()) : null);
             pstmt.setString(8, product.getCategoryId());
-            pstmt.setString(9, product.getImageUrl());
-            pstmt.setString(10, product.getProductId());
+            pstmt.setString(9, product.getProductId()); // This is the WHERE clause parameter
+            // Old index 9 was imageUrl, old index 10 was productId for WHERE
             int rowsAffected = pstmt.executeUpdate();
             if (rowsAffected > 0) {
                 System.out.println("Product updated: " + product.getName());

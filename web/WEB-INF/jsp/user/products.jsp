@@ -7,7 +7,7 @@
 <%
     List<Product> products = (List<Product>) request.getAttribute("products");
     String errorMessage = (String) request.getAttribute("errorMessage");
-    NumberFormat currencyFormatter = NumberFormat.getCurrencyInstance(new Locale("en", "IN")); // For ₹
+    NumberFormat currencyFormatter = NumberFormat.getCurrencyInstance(new Locale("en", "IN"));
 %>
 <!DOCTYPE html>
 <html>
@@ -29,11 +29,13 @@
             padding: 15px; text-align: center; box-shadow: 0 2px 5px rgba(0,0,0,0.05);
             display: flex; flex-direction: column; justify-content: space-between;
         }
+        /* Image style REMOVED as image is removed
         .product-card img {
             max-width: 100%; height: 180px; object-fit: contain; margin-bottom: 15px; border-radius: 4px;
-            background-color: #f0f0f0; /* Placeholder background */
+            background-color: #f0f0f0; 
         }
-        .product-card h3 { font-size: 1.1em; margin: 10px 0 5px 0; color: #333; min-height: 44px; /* For 2 lines of text */ }
+        */
+        .product-card h3 { font-size: 1.1em; margin: 10px 0 5px 0; color: #333; min-height: 44px; }
         .product-card .brand { font-size: 0.9em; color: #777; margin-bottom: 10px; }
         .product-card .price { font-size: 1.2em; font-weight: bold; color: #28a745; margin-bottom: 10px; }
         .product-card .stock { font-size: 0.9em; color: #555; margin-bottom: 15px; }
@@ -59,14 +61,6 @@
         <div class="search-filter-bar">
             <form action="${pageContext.request.contextPath}/ProductServlet" method="get" style="display:flex;">
                 <input type="text" name="search" placeholder="Search products..." value="${param.search != null ? param.search : ''}">
-                <%-- Example Category Filter (Needs CategoryManager and categories attribute from servlet)
-                <select name="category">
-                    <option value="">All Categories</option>
-                    <c:forEach var="cat" items="${categories}">
-                        <option value="${cat.categoryId}" ${param.category == cat.categoryId ? 'selected' : ''}>${cat.categoryName}</option>
-                    </c:forEach>
-                </select>
-                --%>
                 <button type="submit">Search</button>
             </form>
         </div>
@@ -79,8 +73,9 @@
             <div class="product-grid">
                 <% for (Product product : products) { %>
                     <div class="product-card">
-                        <%-- Use a default image if product.getImageUrl() is null or empty --%>
-                        <img src="${product.getImageUrl() != null && !product.getImageUrl().isEmpty() ? product.getImageUrl() : pageContext.request.contextPath += '/images/default_product.png'}" alt="<%= product.getName() %>">
+                        <%-- Image tag REMOVED
+                        <img src="..." alt="<%= product.getName() %>" >
+                        --%>
                         <h3><%= product.getName() %></h3>
                         <p class="brand"><%= product.getBrand() != null ? product.getBrand() : "N/A" %></p>
                         <p class="price"><%= currencyFormatter.format(product.getPrice()) %></p>

@@ -1,11 +1,12 @@
+// src/java/app/servlets/admin/AdminProductServlet.java
 package app.servlets.admin;
 
 import managers.ProductManager;
-import managers.CategoryManager;
+import managers.CategoryManager; 
 import models.Product;
-import models.Category;
+import models.Category; 
 import models.User;
-// import core.IdGenerator; // Not strictly needed here if ProductManager handles ID generation
+import core.IdGenerator; // <<< ADDED THIS IMPORT
 
 import javax.servlet.ServletException;
 import javax.servlet.annotation.WebServlet;
@@ -18,7 +19,7 @@ import java.sql.SQLException;
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.List;
-// import java.util.ArrayList; // Not directly used here
+// import java.util.ArrayList; // Not explicitly used
 
 @WebServlet(name = "AdminProductServlet", urlPatterns = {"/AdminProductServlet", "/admin/products"})
 public class AdminProductServlet extends HttpServlet {
@@ -28,19 +29,18 @@ public class AdminProductServlet extends HttpServlet {
 
     @Override
     public void init() throws ServletException {
+        super.init();
         try {
             productManager = new ProductManager();
             categoryManager = new CategoryManager();
-            System.out.println("AdminProductServlet: Initialized ProductManager and CategoryManager.");
         } catch (SQLException e) {
-            System.err.println("AdminProductServlet: Error initializing managers: " + e.getMessage());
-            throw new ServletException("Error initializing managers", e);
+            throw new ServletException("Failed to initialize managers for AdminProductServlet", e);
         }
     }
 
+    @Override
     protected void doGet(HttpServletRequest request, HttpServletResponse response)
             throws ServletException, IOException {
-        System.out.println("AdminProductServlet: GET request received.");
         HttpSession session = request.getSession(false);
         User loggedInUser = (session != null) ? (User) session.getAttribute("loggedInUser") : null;
 
@@ -50,215 +50,125 @@ public class AdminProductServlet extends HttpServlet {
         }
 
         String action = request.getParameter("action");
-        if (action == null) action = "list"; // Default action
+        if (action == null) action = "list"; 
+
+        String targetPage = "/WEB-INF/jsp/admin/product_management.jsp"; 
 
         try {
             switch (action) {
                 case "add_form":
-                    System.out.println("AdminProductServlet: Action 'add_form'");
-                    showProductForm(request, response, null); // null product for add
+                    request.setAttribute("categories", categoryManager.getAllCategories());
+                    targetPage = "/WEB-INF/jsp/admin/product_form.jsp";
                     break;
                 case "edit_form":
-                    System.out.println("AdminProductServlet: Action 'edit_form'");
                     String productIdToEdit = request.getParameter("productId");
                     Product productToEdit = productManager.getProductById(productIdToEdit);
-                    showProductForm(request, response, productToEdit);
-                    break;
-                case "delete": // Delete is handled by POST in the JSP form for safety, but can be GET with confirmation
-                    System.out.println("AdminProductServlet: GET Action 'delete' - should ideally be POST or confirm heavily");
-                    // For consistency with the form, this direct GET delete isn't used by product_management.jsp
-                    // If you want GET delete, implement confirmation here or ensure it's idempotent
-                    // deleteProduct(request, response);
-                     response.sendRedirect(request.getContextPath() + "/AdminProductServlet?action=list&error=DeleteViaGETNotRecommended");
+                    if (productToEdit != null) {
+                        request.setAttribute("product", productToEdit);
+                        request.setAttribute("categories", categoryManager.getAllCategories());
+                        targetPage = "/WEB-INF/jsp/admin/product_form.jsp";
+                    } else {
+                        session.setAttribute("adminProductError", "Product not found for editing.");
+                        response.sendRedirect(request.getContextPath() + "/AdminProductServlet?action=list");
+                        return;
+                    }
                     break;
                 case "list":
                 default:
-                    System.out.println("AdminProductServlet: Action 'list' (default)");
-                    listProducts(request, response);
+                    List<Product> products = productManager.getAllProducts();
+                    request.setAttribute("products", products);
+                    String successMsg = (String) session.getAttribute("adminProductSuccess");
+                    String errorMsg = (String) session.getAttribute("adminProductError");
+                    if (successMsg != null) { request.setAttribute("adminProductSuccess", successMsg); session.removeAttribute("adminProductSuccess");}
+                    if (errorMsg != null) { request.setAttribute("adminProductError", errorMsg); session.removeAttribute("adminProductError");}
+                    targetPage = "/WEB-INF/jsp/admin/product_management.jsp";
                     break;
             }
         } catch (SQLException e) {
-            System.err.println("AdminProductServlet: SQL Error in doGet - " + e.getMessage());
-            e.printStackTrace();
-            request.setAttribute("adminProductError", "Database error: " + e.getMessage());
-            try { // Add try-catch here for listProducts
-                listProducts(request, response); // Show list with error
-            } catch (ServletException | IOException | SQLException ex) { // Catch potential exceptions from listProducts
-                System.err.println("AdminProductServlet: Error trying to display product list after an initial error: " + ex.getMessage());
-                // Forward to a generic error page or send a simple error response
-                response.sendError(HttpServletResponse.SC_INTERNAL_SERVER_ERROR, "An internal error occurred while trying to display products.");
+            session.setAttribute("adminProductError", "Database error: " + e.getMessage());
+            targetPage = "/WEB-INF/jsp/admin/product_management.jsp"; 
+            try { request.setAttribute("products", productManager.getAllProducts()); } catch (SQLException ex) {
+                 System.err.println("AdminProductServlet: Could not fetch products for error display: " + ex.getMessage());
             }
         }
+        request.getRequestDispatcher(targetPage).forward(request, response);
     }
 
-
+    @Override
     protected void doPost(HttpServletRequest request, HttpServletResponse response)
             throws ServletException, IOException {
-        System.out.println("AdminProductServlet: POST request received.");
         HttpSession session = request.getSession(false);
         User loggedInUser = (session != null) ? (User) session.getAttribute("loggedInUser") : null;
 
         if (loggedInUser == null || loggedInUser.getRole() != User.UserRole.ADMIN) {
-            response.sendError(HttpServletResponse.SC_FORBIDDEN, "Access Denied");
+            response.sendError(HttpServletResponse.SC_FORBIDDEN, "Access Denied.");
             return;
         }
 
         String action = request.getParameter("action");
         if (action == null) {
-            response.sendRedirect(request.getContextPath() + "/AdminProductServlet?action=list&error=NoAction");
+            response.sendRedirect(request.getContextPath() + "/AdminProductServlet?action=list");
             return;
         }
 
         try {
             switch (action) {
                 case "add_product":
-                    System.out.println("AdminProductServlet: POST Action 'add_product'");
-                    addProduct(request, response);
-                    break;
                 case "update_product":
-                    System.out.println("AdminProductServlet: POST Action 'update_product'");
-                    updateProduct(request, response);
+                    String productId = request.getParameter("productId"); 
+                    String name = request.getParameter("name");
+                    String brand = request.getParameter("brand");
+                    String model = request.getParameter("model");
+                    String description = request.getParameter("description");
+                    double price = Double.parseDouble(request.getParameter("price"));
+                    int stock = Integer.parseInt(request.getParameter("stock"));
+                    String mfgDateStr = request.getParameter("manufactureDate");
+                    String categoryId = request.getParameter("categoryId");
+                    
+                    LocalDate mfgDate = null;
+                    if (mfgDateStr != null && !mfgDateStr.isEmpty()) {
+                        try { mfgDate = LocalDate.parse(mfgDateStr); }
+                        catch (DateTimeParseException e) { 
+                            System.err.println("AdminProductServlet: Could not parse mfgDate: " + mfgDateStr + " Error: " + e.getMessage());
+                        }
+                    }
+                    if (categoryId != null && categoryId.isEmpty()) categoryId = null; 
+                    
+                    Product product = new Product(
+                        (productId != null && !productId.isEmpty() ? productId : IdGenerator.generateProductId()), 
+                        name, brand, model, description, price, stock, mfgDate, categoryId
+                    );
+
+                    if ("add_product".equals(action)) {
+                        productManager.addProduct(product);
+                        session.setAttribute("adminProductSuccess", "Product '" + name + "' added successfully!");
+                    } else { 
+                        productManager.updateProduct(product);
+                        session.setAttribute("adminProductSuccess", "Product '" + name + "' updated successfully!");
+                    }
                     break;
-                case "delete": // POST delete is preferred
-                    System.out.println("AdminProductServlet: POST Action 'delete'");
-                    deleteProduct(request, response);
+                case "delete":
+                    String productIdToDelete = request.getParameter("productId");
+                    Product prodToDelete = productManager.getProductById(productIdToDelete); 
+                    if (prodToDelete != null) {
+                        productManager.deleteProduct(productIdToDelete);
+                        session.setAttribute("adminProductSuccess", "Product '" + prodToDelete.getName() + "' (ID: " + productIdToDelete + ") deleted successfully!");
+                    } else {
+                         session.setAttribute("adminProductError", "Could not delete product. ID " + productIdToDelete + " not found.");
+                    }
                     break;
                 default:
-                    response.sendRedirect(request.getContextPath() + "/AdminProductServlet?action=list&error=InvalidPostAction");
+                    session.setAttribute("adminProductError", "Invalid action specified.");
                     break;
             }
-        } catch (SQLException e) {
-            System.err.println("AdminProductServlet: SQL Error in doPost - " + e.getMessage());
-            e.printStackTrace();
-            session.setAttribute("adminProductError", "Database operation failed: " + e.getMessage());
-            response.sendRedirect(request.getContextPath() + "/AdminProductServlet?action=list");
         } catch (NumberFormatException e) {
-            System.err.println("AdminProductServlet: NumberFormat Error in doPost - " + e.getMessage());
-            session.setAttribute("adminProductError", "Invalid number format for price or stock.");
-            response.sendRedirect(request.getContextPath() + "/AdminProductServlet?action=list");
-        }
-    }
-
-    private void listProducts(HttpServletRequest request, HttpServletResponse response)
-            throws SQLException, ServletException, IOException {
-        List<Product> products = productManager.getAllProducts();
-        request.setAttribute("products", products);
-
-        HttpSession session = request.getSession(false);
-        if (session != null) {
-            String successMessage = (String) session.getAttribute("adminProductSuccess");
-            String errorMessage = (String) session.getAttribute("adminProductError");
-            if (successMessage != null) request.setAttribute("adminProductSuccess", successMessage);
-            if (errorMessage != null) request.setAttribute("adminProductError", errorMessage);
-            session.removeAttribute("adminProductSuccess");
-            session.removeAttribute("adminProductError");
-        }
-
-        request.getRequestDispatcher("/WEB-INF/jsp/admin/product_management.jsp").forward(request, response);
-    }
-
-    private void showProductForm(HttpServletRequest request, HttpServletResponse response, Product product)
-            throws SQLException, ServletException, IOException {
-        List<Category> categories = categoryManager.getAllCategories();
-        request.setAttribute("categories", categories);
-        if (product != null) {
-            request.setAttribute("product", product);
-        }
-        request.getRequestDispatcher("/WEB-INF/jsp/admin/product_form.jsp").forward(request, response);
-    }
-
-    private void addProduct(HttpServletRequest request, HttpServletResponse response)
-            throws SQLException, IOException, NumberFormatException {
-        String name = request.getParameter("name");
-        String brand = request.getParameter("brand");
-        String model = request.getParameter("model");
-        String description = request.getParameter("description");
-        double price = Double.parseDouble(request.getParameter("price"));
-        int stock = Integer.parseInt(request.getParameter("stock"));
-        String mfgDateStr = request.getParameter("manufactureDate");
-        String categoryId = request.getParameter("categoryId");
-        String imageUrl = request.getParameter("imageUrl");
-
-        LocalDate manufactureDate = null;
-        if (mfgDateStr != null && !mfgDateStr.isEmpty()) {
-            try {
-                manufactureDate = LocalDate.parse(mfgDateStr);
-            } catch (DateTimeParseException e) {
-                 System.err.println("Invalid manufacture date format for add: " + mfgDateStr + " - Error: " + e.getMessage());
-                 // Optionally set error message and redirect back to form
-            }
-        }
-        if (categoryId != null && categoryId.isEmpty()) {
-            categoryId = null;
-        }
-        if (imageUrl != null && imageUrl.trim().isEmpty()) {
-            imageUrl = null;
-        }
-
-        Product newProduct = new Product(null, name, brand, model, description, price, stock, manufactureDate, categoryId, imageUrl);
-        productManager.addProduct(newProduct);
-
-        request.getSession().setAttribute("adminProductSuccess", "Product '" + name + "' added successfully!");
-        response.sendRedirect(request.getContextPath() + "/AdminProductServlet?action=list");
-    }
-
-    private void updateProduct(HttpServletRequest request, HttpServletResponse response)
-            throws SQLException, IOException, NumberFormatException {
-        String productId = request.getParameter("productId");
-        String name = request.getParameter("name");
-        String brand = request.getParameter("brand");
-        String model = request.getParameter("model");
-        String description = request.getParameter("description");
-        double price = Double.parseDouble(request.getParameter("price"));
-        int stock = Integer.parseInt(request.getParameter("stock"));
-        String mfgDateStr = request.getParameter("manufactureDate");
-        String categoryId = request.getParameter("categoryId");
-        String imageUrl = request.getParameter("imageUrl");
-
-        LocalDate manufactureDate = null;
-        if (mfgDateStr != null && !mfgDateStr.isEmpty()) {
-             try {
-                manufactureDate = LocalDate.parse(mfgDateStr);
-            } catch (DateTimeParseException e) {
-                 System.err.println("Invalid manufacture date format for update: " + mfgDateStr + " - Error: " + e.getMessage());
-            }
-        }
-        if (categoryId != null && categoryId.isEmpty()) {
-            categoryId = null;
-        }
-        if (imageUrl != null && imageUrl.trim().isEmpty()) {
-            imageUrl = null;
-        }
-
-        Product productToUpdate = new Product(productId, name, brand, model, description, price, stock, manufactureDate, categoryId, imageUrl);
-        boolean updated = productManager.updateProduct(productToUpdate);
-
-        if(updated) {
-            request.getSession().setAttribute("adminProductSuccess", "Product '" + name + "' updated successfully!");
-        } else {
-            request.getSession().setAttribute("adminProductError", "Failed to update product '" + name + "'. It might not exist.");
-        }
-        response.sendRedirect(request.getContextPath() + "/AdminProductServlet?action=list");
-    }
-
-    private void deleteProduct(HttpServletRequest request, HttpServletResponse response) // This is now called by POST
-            throws SQLException, IOException {
-        String productId = request.getParameter("productId");
-        if (productId == null || productId.trim().isEmpty()) {
-            request.getSession().setAttribute("adminProductError", "Product ID for deletion was missing.");
-            response.sendRedirect(request.getContextPath() + "/AdminProductServlet?action=list");
-            return;
-        }
-
-        Product p = productManager.getProductById(productId);
-        boolean deleted = productManager.deleteProduct(productId);
-
-        if(deleted && p != null) {
-            request.getSession().setAttribute("adminProductSuccess", "Product '" + p.getName() + "' (ID: "+productId+") deleted successfully!");
-        } else if (deleted) { // Product existed but could not retrieve its details before delete for some reason
-            request.getSession().setAttribute("adminProductSuccess", "Product ID: "+productId+" deleted successfully!");
-        } else { // Deletion failed
-             request.getSession().setAttribute("adminProductError", "Failed to delete product ID: " + productId + ". It might not exist or has dependencies.");
+            session.setAttribute("adminProductError", "Invalid number format for price or stock: " + e.getMessage());
+        } catch (SQLException e) {
+            session.setAttribute("adminProductError", "Database error processing product: " + e.getMessage());
+             e.printStackTrace();
+        } catch (Exception e) { 
+            session.setAttribute("adminProductError", "An unexpected error occurred: " + e.getMessage());
+            e.printStackTrace(); 
         }
         response.sendRedirect(request.getContextPath() + "/AdminProductServlet?action=list");
     }

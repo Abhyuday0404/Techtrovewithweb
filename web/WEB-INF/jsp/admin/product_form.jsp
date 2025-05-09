@@ -5,7 +5,7 @@
 <%@ page import="java.time.LocalDate" %>
 
 <%
-    Product product = (Product) request.getAttribute("product"); // Will be null for "add"
+    Product product = (Product) request.getAttribute("product"); 
     List<Category> categories = (List<Category>) request.getAttribute("categories");
     boolean isEditMode = (product != null);
     String formAction = isEditMode ? "update_product" : "add_product";
@@ -27,7 +27,6 @@
         .form-group input[type="text"],
         .form-group input[type="number"],
         .form-group input[type="date"],
-        .form-group input[type="url"],
         .form-group textarea,
         .form-group select {
             width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; font-size: 0.95em;
@@ -97,11 +96,12 @@
                         %>
                     </select>
                 </div>
+                <%-- Image URL input field REMOVED
                  <div class="form-group">
-                    <label for="imageUrl">Image URL (Optional):</label>
-                    <input type="url" id="imageUrl" name="imageUrl" placeholder="https://example.com/image.jpg" value="<%= isEditMode && product.getImageUrl() != null ? product.getImageUrl() : "" %>">
+                    <label for="imageUrl">Image Path (Optional):</label>
+                    <input type="text" id="imageUrl" name="imageUrl" placeholder="e.g., images/your_image.png" value="<%= isEditMode && product.getImageUrl() != null ? product.getImageUrl() : "" %>">
                 </div>
-
+                --%>
                 <div class="form-actions">
                     <button type="submit" class="btn-submit"><%= submitButtonText %></button>
                     <a href="${pageContext.request.contextPath}/AdminProductServlet?action=list" class="btn-cancel">Cancel</a>
