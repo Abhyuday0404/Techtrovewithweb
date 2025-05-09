@@ -2,7 +2,7 @@ package managers;
 
 import db.DBUtil;
 import models.Product;
-import core.IdGenerator; // Added import
+import core.IdGenerator; // Ensure this import is present
 
 import java.sql.*;
 import java.util.ArrayList;
@@ -75,16 +75,23 @@ public class ProductManager {
     }
 
     public void addProduct(Product product) throws SQLException {
-        // If ProductID is not set by the caller, generate one
+        // Ensure ProductID is set before inserting.
+        // The Product object might have been created with a null ID.
         if (product.getProductId() == null || product.getProductId().trim().isEmpty()) {
-            product.setProductId(IdGenerator.generateProductId());
+            product.setProductId(IdGenerator.generateProductId()); // Use the setter in Product model
+        } else {
+            // If an ID was somehow passed, ensure it's not just whitespace (though Product constructor might catch this too)
+             if (product.getProductId().trim().isEmpty()) {
+                 // This case should ideally be caught by Product.setProductId if it's called with empty string
+                 throw new SQLException("Product ID was provided but is empty or whitespace.");
+             }
         }
 
         String sql = "INSERT INTO Products (ProductID, Name, Brand, Model, Description, Price, Stock, ManufactureDate, CategoryID, ImageURL) " +
                      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
         try (Connection conn = DBUtil.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
-            pstmt.setString(1, product.getProductId());
+            pstmt.setString(1, product.getProductId()); // Now guaranteed to be non-null and non-empty
             pstmt.setString(2, product.getName());
             pstmt.setString(3, product.getBrand());
             pstmt.setString(4, product.getModel());
@@ -100,6 +107,9 @@ public class ProductManager {
     }
 
     public boolean updateProduct(Product product) throws SQLException {
+        if (product.getProductId() == null || product.getProductId().trim().isEmpty()) {
+            throw new SQLException("Product ID cannot be null or empty for an update operation.");
+        }
         String sql = "UPDATE Products SET Name = ?, Brand = ?, Model = ?, Description = ?, Price = ?, " +
                      "Stock = ?, ManufactureDate = ?, CategoryID = ?, ImageURL = ? WHERE ProductID = ?";
         try (Connection conn = DBUtil.getConnection();
@@ -123,10 +133,9 @@ public class ProductManager {
     }
 
     public boolean deleteProduct(String productId) throws SQLException {
-        // Consider checking for dependencies (e.g., if product is in active orders/carts
-        // where ON DELETE SET NULL isn't sufficient or desired) before deleting.
-        // The DB schema for OrderDetails and Feedback uses ON DELETE SET NULL for ProductID.
-        // Cart uses ON DELETE CASCADE for ProductID.
+         if (productId == null || productId.trim().isEmpty()) {
+            throw new SQLException("Product ID cannot be null or empty for a delete operation.");
+        }
         String sql = "DELETE FROM Products WHERE ProductID = ?";
         try (Connection conn = DBUtil.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {

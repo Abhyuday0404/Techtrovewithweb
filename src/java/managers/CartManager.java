@@ -1,58 +1,66 @@
+// src/java/managers/CartManager.java
 package managers;
 
+import db.DBUtil;
+import models.Cart;
 import models.CartItem;
 import models.Product;
-import models.User; // Needed for User context
-import db.DBUtil;
-import core.IdGenerator; // Assuming you have this from Part 1
-import exceptions.InvalidProductIdException;
-import exceptions.NoQuantityLeftException;
+import core.IdGenerator;
+import exceptions.InvalidQuantityException; // Assuming you have this
+import exceptions.NoQuantityLeftException; // Assuming you have this
 
 import java.sql.*;
 import java.util.ArrayList;
 import java.util.List;
 
 public class CartManager {
-    // No currentUserId field needed if we pass it to methods or get from session within servlet
 
-    private ProductManager productManager;
+    private ProductManager productManager; // To get product details
 
     public CartManager() throws SQLException {
-        // Initialize ProductManager, it's a dependency
         try {
             this.productManager = new ProductManager();
         } catch (SQLException e) {
-            System.err.println("CartManager FATAL: Failed to initialize ProductManager dependency.");
-            throw e; // Rethrow to signal critical failure
+            System.err.println("CartManager: Failed to initialize ProductManager: " + e.getMessage());
+            throw e;
         }
     }
 
+    /**
+     * Retrieves all cart items for a given user, enriched with product details.
+     * @param userId The ID of the user.
+     * @return A list of CartItem objects.
+     * @throws SQLException if a database error occurs.
+     */
     public List<CartItem> getCartItems(String userId) throws SQLException {
-        if (userId == null || userId.trim().isEmpty()) {
-            throw new IllegalArgumentException("User ID cannot be null or empty when fetching cart items.");
-        }
         List<CartItem> cartItems = new ArrayList<>();
-        String sql = "SELECT c.CartID, c.Quantity, p.* " + // Select all product fields
+        // SQL to join Cart with Products to get product details
+        String sql = "SELECT c.CartID, c.ProductID, c.Quantity, p.Name, p.Price, p.Stock, p.ImageURL, p.Brand " +
                      "FROM Cart c JOIN Products p ON c.ProductID = p.ProductID " +
-                     "WHERE c.UserID = ? ORDER BY p.Name"; // Order by product name for consistent display
+                     "WHERE c.UserID = ?";
 
         try (Connection conn = DBUtil.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
             pstmt.setString(1, userId);
             try (ResultSet rs = pstmt.executeQuery()) {
                 while (rs.next()) {
-                    // Use the ProductManager's mapping logic if available, or map here
-                    java.sql.Date sqlMfgDate = rs.getDate("ManufactureDate");
+                    // Create a Product object for the CartItem
                     Product product = new Product(
-                        rs.getString("ProductID"), rs.getString("Name"), rs.getString("Brand"),
-                        rs.getString("Model"), rs.getString("Description"), rs.getDouble("Price"),
-                        rs.getInt("Stock"), (sqlMfgDate != null) ? sqlMfgDate.toLocalDate() : null,
-                        rs.getString("CategoryID"), rs.getString("ImageURL"));
-
+                            rs.getString("ProductID"),
+                            rs.getString("Name"),
+                            rs.getString("Brand"),
+                            null, // Model - not fetched here, can be added if needed
+                            null, // Description - not fetched here
+                            rs.getDouble("Price"),
+                            rs.getInt("Stock"), // Current stock, good for display/validation
+                            null, // ManufactureDate - not fetched
+                            null, // CategoryId - not fetched
+                            rs.getString("ImageURL")
+                    );
                     CartItem item = new CartItem(
-                        rs.getString("CartID"),
-                        product, // The fully mapped Product object
-                        rs.getInt("Quantity")
+                            rs.getString("CartID"),
+                            product,
+                            rs.getInt("Quantity")
                     );
                     cartItems.add(item);
                 }
@@ -61,183 +69,183 @@ public class CartManager {
         return cartItems;
     }
 
-    public void addToCart(String userId, String productId, int quantity)
-            throws SQLException, NoQuantityLeftException, InvalidProductIdException, IllegalArgumentException {
+    /**
+     * Adds a product to the user's cart or updates its quantity if it already exists.
+     * @param userId The ID of the user.
+     * @param productId The ID of the product to add.
+     * @param quantity The quantity to add.
+     * @throws SQLException if a database error occurs.
+     * @throws InvalidQuantityException if quantity is not positive.
+     * @throws NoQuantityLeftException if requested quantity exceeds stock.
+     */
+    public void addItemToCart(String userId, String productId, int quantity)
+            throws SQLException, InvalidQuantityException, NoQuantityLeftException {
+        if (quantity <= 0) {
+            throw new InvalidQuantityException("Quantity to add to cart must be positive.");
+        }
 
-        if (userId == null || userId.trim().isEmpty()) throw new IllegalArgumentException("User ID required.");
-        if (productId == null || productId.trim().isEmpty()) throw new InvalidProductIdException("Product ID required.");
-        if (quantity <= 0) throw new IllegalArgumentException("Quantity must be positive.");
+        Product product = productManager.getProductById(productId);
+        if (product == null) {
+            throw new SQLException("Product with ID " + productId + " not found.");
+        }
+        if (product.getStock() < quantity) {
+            throw new NoQuantityLeftException("Not enough stock for " + product.getName() +
+                                              ". Requested: " + quantity + ", Available: " + product.getStock());
+        }
 
-        Connection conn = null; // Declare outside try for rollback
-        try {
-            conn = DBUtil.getConnection();
-            conn.setAutoCommit(false); // Start transaction
+        Cart existingCartEntry = findCartEntry(userId, productId);
 
-            Product product = productManager.getProductById(productId); // Fetch product details
-            if (product == null) {
-                conn.rollback(); // Rollback before throwing
-                throw new InvalidProductIdException("Product with ID '" + productId + "' not found.");
+        if (existingCartEntry != null) {
+            // Product already in cart, update quantity
+            int newQuantity = existingCartEntry.getQuantity() + quantity;
+            if (product.getStock() < newQuantity) { // Re-check stock for combined quantity
+                 throw new NoQuantityLeftException("Not enough stock for " + product.getName() +
+                                              " to increase quantity. Requested total: " + newQuantity + ", Available: " + product.getStock());
             }
-            int availableStock = product.getStock();
-
-            // Check if item already in cart for this user
-            String checkCartSql = "SELECT CartID, Quantity FROM Cart WHERE UserID = ? AND ProductID = ?";
-            int existingQuantityInCart = 0;
-            String existingCartId = null;
-
-            try (PreparedStatement pstCheck = conn.prepareStatement(checkCartSql)) {
-                pstCheck.setString(1, userId);
-                pstCheck.setString(2, productId);
-                try (ResultSet rsCart = pstCheck.executeQuery()) {
-                    if (rsCart.next()) {
-                        existingCartId = rsCart.getString("CartID");
-                        existingQuantityInCart = rsCart.getInt("Quantity");
-                    }
-                }
-            }
-
-            int newTotalQuantityInCart = existingQuantityInCart + quantity;
-
-            if (newTotalQuantityInCart > availableStock) {
-                 conn.rollback();
-                 throw new NoQuantityLeftException(String.format(
-                    "Cannot add %d of '%s'. Requested total %d exceeds available stock of %d. (Already in cart: %d)",
-                    quantity, product.getName(), newTotalQuantityInCart, availableStock, existingQuantityInCart));
-            }
-
-            if (existingCartId != null) { // Update existing cart item
-                String updateSql = "UPDATE Cart SET Quantity = ? WHERE CartID = ?";
-                try (PreparedStatement pstUpdate = conn.prepareStatement(updateSql)) {
-                    pstUpdate.setInt(1, newTotalQuantityInCart);
-                    pstUpdate.setString(2, existingCartId);
-                    pstUpdate.executeUpdate();
-                    System.out.println("Updated CartID " + existingCartId + " for user " + userId + " to quantity " + newTotalQuantityInCart);
-                }
-            } else { // Insert new cart item
-                String insertSql = "INSERT INTO Cart (CartID, UserID, ProductID, Quantity) VALUES (?, ?, ?, ?)";
-                try (PreparedStatement pstInsert = conn.prepareStatement(insertSql)) {
-                    String newCartId = IdGenerator.generateCartId(); // Assuming IdGenerator is available
-                    pstInsert.setString(1, newCartId);
-                    pstInsert.setString(2, userId);
-                    pstInsert.setString(3, productId);
-                    pstInsert.setInt(4, quantity); // Initial quantity to add
-                    pstInsert.executeUpdate();
-                    System.out.println("Added new CartID " + newCartId + " for user " + userId + " product " + productId + " with quantity " + quantity);
-                }
-            }
-            conn.commit();
-        } catch (SQLException | NoQuantityLeftException | InvalidProductIdException | IllegalArgumentException e) {
-            if (conn != null) {
-                try { conn.rollback(); } catch (SQLException exRb) { System.err.println("Rollback failed in addToCart: " + exRb.getMessage()); }
-            }
-            System.err.println("Error in addToCart for user " + userId + ", product " + productId + ": " + e.getMessage());
-            throw e; // Re-throw the exception to be handled by the servlet
-        } finally {
-            if (conn != null) {
-                try { conn.setAutoCommit(true); conn.close(); } catch (SQLException ignored) {}
+            updateCartItemQuantity(existingCartEntry.getCartId(), newQuantity);
+            System.out.println("Updated CartID " + existingCartEntry.getCartId() + " to quantity " + newQuantity);
+        } else {
+            // New product for the cart
+            String cartId = IdGenerator.generateCartId();
+            String sql = "INSERT INTO Cart (CartID, UserID, ProductID, Quantity) VALUES (?, ?, ?, ?)";
+            try (Connection conn = DBUtil.getConnection();
+                 PreparedStatement pstmt = conn.prepareStatement(sql)) {
+                pstmt.setString(1, cartId);
+                pstmt.setString(2, userId);
+                pstmt.setString(3, productId);
+                pstmt.setInt(4, quantity);
+                pstmt.executeUpdate();
+                System.out.println("Added new CartID " + cartId + " for user " + userId + " product " + productId + " with quantity " + quantity);
             }
         }
     }
 
-    public boolean updateQuantity(String userId, String cartId, int newQuantity)
-            throws SQLException, NoQuantityLeftException, IllegalArgumentException {
-        if (userId == null || userId.trim().isEmpty()) throw new IllegalArgumentException("User ID required.");
-        if (cartId == null || cartId.trim().isEmpty()) throw new IllegalArgumentException("Cart ID required.");
-
-        if (newQuantity <= 0) { // If new quantity is 0 or less, remove the item
-            return removeFromCart(userId, cartId);
-        }
-
-        Connection conn = null;
-        try {
-            conn = DBUtil.getConnection();
-            conn.setAutoCommit(false);
-
-            // Get product ID and current stock for validation
-            String getProductInfoSql = "SELECT c.ProductID, p.Stock, p.Name FROM Cart c JOIN Products p ON c.ProductID = p.ProductID WHERE c.CartID = ? AND c.UserID = ?";
-            String productId = null;
-            int availableStock = 0;
-            String productName = null;
-
-            try(PreparedStatement pstmtInfo = conn.prepareStatement(getProductInfoSql)) {
-                pstmtInfo.setString(1, cartId);
-                pstmtInfo.setString(2, userId);
-                try(ResultSet rsInfo = pstmtInfo.executeQuery()){
-                    if(rsInfo.next()){
-                        productId = rsInfo.getString("ProductID");
-                        availableStock = rsInfo.getInt("Stock");
-                        productName = rsInfo.getString("Name");
-                    } else {
-                        conn.rollback();
-                        throw new IllegalArgumentException("Cart item with ID '" + cartId + "' not found for user '" + userId + "'.");
-                    }
+    /**
+     * Finds an existing cart entry for a user and product.
+     * @param userId The user's ID.
+     * @param productId The product's ID.
+     * @return The Cart object if found, null otherwise.
+     * @throws SQLException if a database error occurs.
+     */
+    private Cart findCartEntry(String userId, String productId) throws SQLException {
+        String sql = "SELECT * FROM Cart WHERE UserID = ? AND ProductID = ?";
+        try (Connection conn = DBUtil.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setString(1, userId);
+            pstmt.setString(2, productId);
+            try (ResultSet rs = pstmt.executeQuery()) {
+                if (rs.next()) {
+                    return new Cart(
+                            rs.getString("CartID"),
+                            rs.getString("UserID"),
+                            rs.getString("ProductID"),
+                            rs.getInt("Quantity")
+                    );
                 }
             }
+        }
+        return null;
+    }
 
-            if (newQuantity > availableStock) {
-                conn.rollback();
-                throw new NoQuantityLeftException(String.format(
-                    "Cannot update quantity of '%s' to %d. Only %d available in stock.",
-                    productName, newQuantity, availableStock));
-            }
+    /**
+     * Updates the quantity of an existing item in the cart.
+     * @param cartId The ID of the cart entry to update.
+     * @param newQuantity The new quantity (must be positive).
+     * @throws SQLException if a database error occurs.
+     * @throws InvalidQuantityException if newQuantity is not positive.
+     * @throws NoQuantityLeftException if newQuantity exceeds available stock (requires fetching product stock).
+     */
+    public void updateCartItemQuantity(String cartId, int newQuantity)
+            throws SQLException, InvalidQuantityException, NoQuantityLeftException {
+        if (newQuantity <= 0) {
+            // If new quantity is 0 or less, it's better to call removeItemFromCart
+            throw new InvalidQuantityException("New quantity must be positive. To remove, use removeItemFromCart.");
+        }
 
-            String updateSql = "UPDATE Cart SET Quantity = ? WHERE CartID = ? AND UserID = ?";
-            try (PreparedStatement pstmt = conn.prepareStatement(updateSql)) {
-                pstmt.setInt(1, newQuantity);
-                pstmt.setString(2, cartId);
-                pstmt.setString(3, userId);
-                int rowsAffected = pstmt.executeUpdate();
-                if (rowsAffected > 0) {
-                    conn.commit();
-                    System.out.println("Updated quantity for CartID " + cartId + " to " + newQuantity + " for user " + userId);
-                    return true;
+        // Before updating, check stock for the product associated with this cartId
+        String getProductSql = "SELECT ProductID FROM Cart WHERE CartID = ?";
+        String productId = null;
+        try (Connection conn = DBUtil.getConnection();
+             PreparedStatement pstmtGetProd = conn.prepareStatement(getProductSql)) {
+            pstmtGetProd.setString(1, cartId);
+            try (ResultSet rs = pstmtGetProd.executeQuery()) {
+                if (rs.next()) {
+                    productId = rs.getString("ProductID");
                 } else {
-                    conn.rollback(); // Should not happen if product info was found
-                    return false;
+                    throw new SQLException("Cart item with ID " + cartId + " not found to update quantity.");
                 }
             }
-        } catch (SQLException | NoQuantityLeftException | IllegalArgumentException e) {
-            if (conn != null) {
-                try { conn.rollback(); } catch (SQLException exRb) { System.err.println("Rollback failed: " + exRb.getMessage()); }
-            }
-            System.err.println("Error updating cart quantity for CartID " + cartId + ", UserID " + userId + ": " + e.getMessage());
-            throw e;
-        } finally {
-            if (conn != null) {
-                try { conn.setAutoCommit(true); conn.close(); } catch (SQLException ignored) {}
+        }
+
+        Product product = productManager.getProductById(productId);
+        if (product == null) {
+            throw new SQLException("Product associated with cart item " + cartId + " not found.");
+        }
+        if (product.getStock() < newQuantity) {
+            throw new NoQuantityLeftException("Not enough stock for " + product.getName() +
+                                              ". Requested: " + newQuantity + ", Available: " + product.getStock());
+        }
+
+        String sql = "UPDATE Cart SET Quantity = ? WHERE CartID = ?";
+        try (Connection conn = DBUtil.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setInt(1, newQuantity);
+            pstmt.setString(2, cartId);
+            int affectedRows = pstmt.executeUpdate();
+            if (affectedRows == 0) {
+                System.err.println("Warning: No cart item found with CartID " + cartId + " to update quantity.");
+            } else {
+                System.out.println("Updated quantity for CartID " + cartId + " to " + newQuantity);
             }
         }
     }
 
-    public boolean removeFromCart(String userId, String cartId) throws SQLException {
-        if (userId == null || userId.trim().isEmpty()) throw new IllegalArgumentException("User ID required.");
-        if (cartId == null || cartId.trim().isEmpty()) throw new IllegalArgumentException("Cart ID required.");
-
-        String sql = "DELETE FROM Cart WHERE CartID = ? AND UserID = ?";
+    /**
+     * Removes an item completely from the cart.
+     * @param cartId The ID of the cart entry to remove.
+     * @throws SQLException if a database error occurs.
+     */
+    public void removeItemFromCart(String cartId) throws SQLException {
+        String sql = "DELETE FROM Cart WHERE CartID = ?";
         try (Connection conn = DBUtil.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
             pstmt.setString(1, cartId);
-            pstmt.setString(2, userId);
-            int rowsAffected = pstmt.executeUpdate();
-            if (rowsAffected > 0) {
-                 System.out.println("Removed CartID " + cartId + " for user " + userId);
+            int affectedRows = pstmt.executeUpdate();
+             if (affectedRows == 0) {
+                System.err.println("Warning: No cart item found with CartID " + cartId + " to remove.");
             } else {
-                 System.out.println("No cart item found with CartID " + cartId + " for user " + userId + " to remove.");
+                System.out.println("Removed CartID " + cartId);
             }
-            return rowsAffected > 0;
         }
     }
 
+    /**
+     * Clears all items from a user's cart (e.g., after checkout).
+     * @param userId The ID of the user whose cart is to be cleared.
+     * @throws SQLException if a database error occurs.
+     */
     public void clearCart(String userId) throws SQLException {
-        if (userId == null || userId.trim().isEmpty()) {
-            throw new IllegalArgumentException("User ID cannot be null or empty for clearing cart.");
-        }
         String sql = "DELETE FROM Cart WHERE UserID = ?";
         try (Connection conn = DBUtil.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
             pstmt.setString(1, userId);
-            int rowsAffected = pstmt.executeUpdate();
-            System.out.println("Cleared cart for UserID " + userId + ". Items removed: " + rowsAffected);
+            pstmt.executeUpdate();
+            System.out.println("Cart cleared for user: " + userId);
         }
+    }
+
+    /**
+     * Calculates the total price of all items in the cart.
+     * @param cartItems List of CartItem objects.
+     * @return The total price.
+     */
+    public double calculateTotal(List<CartItem> cartItems) {
+        double total = 0.0;
+        if (cartItems != null) {
+            for (CartItem item : cartItems) {
+                total += item.getSubtotal(); // CartItem.getSubtotal() = product.getPrice() * quantity
+            }
+        }
+        return total;
     }
 }

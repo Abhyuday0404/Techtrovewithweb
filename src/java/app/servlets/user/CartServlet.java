@@ -3,7 +3,7 @@ package app.servlets.user;
 import managers.CartManager;
 import models.CartItem;
 import models.User;
-import exceptions.InvalidProductIdException;
+import exceptions.InvalidQuantityException;
 import exceptions.NoQuantityLeftException;
 
 import javax.servlet.ServletException;
@@ -15,7 +15,6 @@ import javax.servlet.http.HttpSession;
 import java.io.IOException;
 import java.sql.SQLException;
 import java.util.List;
-import java.util.ArrayList; // Import ArrayList
 
 @WebServlet(name = "CartServlet", urlPatterns = {"/CartServlet", "/cart"})
 public class CartServlet extends HttpServlet {
@@ -24,13 +23,12 @@ public class CartServlet extends HttpServlet {
 
     @Override
     public void init() throws ServletException {
-        super.init();
         try {
             cartManager = new CartManager();
             System.out.println("CartServlet: CartManager initialized.");
         } catch (SQLException e) {
-            System.err.println("CartServlet: Failed to initialize CartManager: " + e.getMessage());
-            throw new ServletException("Failed to initialize CartManager", e);
+            System.err.println("CartServlet: Error initializing CartManager: " + e.getMessage());
+            throw new ServletException("Error initializing CartManager", e);
         }
     }
 
@@ -41,36 +39,37 @@ public class CartServlet extends HttpServlet {
         User loggedInUser = (session != null) ? (User) session.getAttribute("loggedInUser") : null;
 
         if (loggedInUser == null) {
-            System.out.println("CartServlet: User not logged in. Redirecting to login.");
             response.sendRedirect(request.getContextPath() + "/LoginServlet");
             return;
         }
 
-        String errorMessage = (String) session.getAttribute("cartError");
-        String successMessage = (String) session.getAttribute("cartSuccess");
-        if (errorMessage != null) request.setAttribute("errorMessage", errorMessage);
-        if (successMessage != null) request.setAttribute("successMessage", successMessage);
-        session.removeAttribute("cartError");
-        session.removeAttribute("cartSuccess");
-
-
-        List<CartItem> cartItems = new ArrayList<>(); // Initialize to empty
-        double totalAmount = 0.0;
-
         try {
-            cartItems = cartManager.getCartItems(loggedInUser.getUserId());
-            for (CartItem item : cartItems) {
-                totalAmount += item.getSubtotal();
+            List<CartItem> cartItems = cartManager.getCartItems(loggedInUser.getUserId());
+            double totalAmount = cartManager.calculateTotal(cartItems);
+
+            request.setAttribute("cartItems", cartItems);
+            request.setAttribute("totalAmount", totalAmount);
+
+            // Forward any messages from POST operations
+            String successMessage = (String) session.getAttribute("cartSuccess");
+            String errorMessage = (String) session.getAttribute("cartError");
+            if (successMessage != null) {
+                request.setAttribute("cartSuccess", successMessage);
+                session.removeAttribute("cartSuccess");
+            }
+            if (errorMessage != null) {
+                request.setAttribute("cartError", errorMessage);
+                session.removeAttribute("cartError");
             }
             System.out.println("CartServlet: Fetched " + cartItems.size() + " items for user " + loggedInUser.getUserId() + ". Total: " + totalAmount);
-        } catch (SQLException e) {
-            System.err.println("CartServlet: SQL error fetching cart items for user " + loggedInUser.getUserId() + ": " + e.getMessage());
-            request.setAttribute("errorMessage", "Error loading your cart. Please try again later.");
-        }
+            request.getRequestDispatcher("/WEB-INF/jsp/user/cart.jsp").forward(request, response);
 
-        request.setAttribute("cartItems", cartItems);
-        request.setAttribute("totalAmount", totalAmount);
-        request.getRequestDispatcher("/WEB-INF/jsp/user/cart.jsp").forward(request, response);
+        } catch (SQLException e) {
+            System.err.println("CartServlet GET: SQL error fetching cart: " + e.getMessage());
+            e.printStackTrace();
+            request.setAttribute("cartError", "Could not load your cart. Please try again later.");
+            request.getRequestDispatcher("/WEB-INF/jsp/user/cart.jsp").forward(request, response);
+        }
     }
 
     protected void doPost(HttpServletRequest request, HttpServletResponse response)
@@ -80,51 +79,59 @@ public class CartServlet extends HttpServlet {
         User loggedInUser = (session != null) ? (User) session.getAttribute("loggedInUser") : null;
 
         if (loggedInUser == null) {
-            System.out.println("CartServlet POST: User not logged in. Responding with error/redirect.");
-            // For AJAX, might send JSON error. For form, redirect.
-            response.sendRedirect(request.getContextPath() + "/LoginServlet");
+            response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "User not logged in.");
             return;
         }
 
         String action = request.getParameter("action");
-        String productId = request.getParameter("productId");
-        String cartId = request.getParameter("cartId"); // For update/remove
+        String productId = request.getParameter("productId"); // Used for 'add'
+        String cartId = request.getParameter("cartId");       // Used for 'update' and 'remove'
 
         System.out.println("CartServlet POST: Action='" + action + "', ProductID='" + productId + "', CartID='" + cartId + "' for User: " + loggedInUser.getUserId());
 
 
         try {
-            if ("add".equals(action) && productId != null) {
-                int quantity = 1; // Default quantity
+            if ("add".equals(action) && productId != null && !productId.isEmpty()) {
                 String quantityStr = request.getParameter("quantity");
+                int quantity = 1; // Default quantity
                 if (quantityStr != null && !quantityStr.isEmpty()) {
                     try {
                         quantity = Integer.parseInt(quantityStr);
-                        if (quantity < 1) quantity = 1; // Ensure positive quantity
                     } catch (NumberFormatException e) {
-                        System.err.println("CartServlet: Invalid quantity format for add: " + quantityStr);
-                        session.setAttribute("cartError", "Invalid quantity specified.");
-                        // quantity remains 1
+                        session.setAttribute("cartError", "Invalid quantity format.");
+                        response.sendRedirect(request.getContextPath() + "/ProductServlet"); // Or back to product page
+                        return;
                     }
                 }
-                cartManager.addToCart(loggedInUser.getUserId(), productId, quantity);
-                session.setAttribute("cartSuccess", "Product added to cart!");
+                // Using the method name from the CartManager I provided
+                cartManager.addItemToCart(loggedInUser.getUserId(), productId, quantity);
+                session.setAttribute("cartSuccess", "Product added to cart successfully!");
                 System.out.println("CartServlet: Product " + productId + " (qty " + quantity + ") added for user " + loggedInUser.getUserId());
 
-            } else if ("update".equals(action) && cartId != null) {
+            } else if ("update".equals(action) && cartId != null && !cartId.isEmpty()) {
                 String quantityStr = request.getParameter("quantity");
                 if (quantityStr != null && !quantityStr.isEmpty()) {
                     int newQuantity = Integer.parseInt(quantityStr);
-                    cartManager.updateQuantity(loggedInUser.getUserId(), cartId, newQuantity);
-                    session.setAttribute("cartSuccess", "Cart updated successfully.");
-                    System.out.println("CartServlet: Cart item " + cartId + " updated to qty " + newQuantity + " for user " + loggedInUser.getUserId());
+                    if (newQuantity > 0) {
+                        // Using the method name from the CartManager I provided
+                        cartManager.updateCartItemQuantity(cartId, newQuantity);
+                        session.setAttribute("cartSuccess", "Cart updated successfully.");
+                        System.out.println("CartServlet: Cart item " + cartId + " updated to qty " + newQuantity + " for user " + loggedInUser.getUserId());
+                    } else { // Quantity is 0 or less, treat as remove
+                        cartManager.removeItemFromCart(cartId);
+                        session.setAttribute("cartSuccess", "Product removed from cart.");
+                        System.out.println("CartServlet: Cart item " + cartId + " removed (qty <= 0) for user " + loggedInUser.getUserId());
+                    }
                 } else {
-                     session.setAttribute("cartError", "Quantity not provided for update.");
+                    session.setAttribute("cartError", "Quantity not provided for update.");
                 }
-            } else if ("remove".equals(action) && cartId != null) {
-                cartManager.removeFromCart(loggedInUser.getUserId(), cartId);
+
+            } else if ("remove".equals(action) && cartId != null && !cartId.isEmpty()) {
+                // Using the method name from the CartManager I provided
+                cartManager.removeItemFromCart(cartId);
                 session.setAttribute("cartSuccess", "Product removed from cart.");
                 System.out.println("CartServlet: Cart item " + cartId + " removed for user " + loggedInUser.getUserId());
+
             } else {
                 System.out.println("CartServlet: Invalid or missing action/parameters.");
                 session.setAttribute("cartError", "Invalid cart operation.");
@@ -132,22 +139,23 @@ public class CartServlet extends HttpServlet {
         } catch (NoQuantityLeftException e) {
             System.err.println("CartServlet (NoQuantityLeftException): " + e.getMessage());
             session.setAttribute("cartError", e.getMessage());
-        } catch (InvalidProductIdException e) {
-            System.err.println("CartServlet (InvalidProductIdException): " + e.getMessage());
-            session.setAttribute("cartError", "Invalid product specified: " + e.getMessage());
+        } catch (InvalidQuantityException e) {
+            System.err.println("CartServlet (InvalidQuantityException): " + e.getMessage());
+            session.setAttribute("cartError", e.getMessage());
         } catch (SQLException e) {
             System.err.println("CartServlet (SQLException): " + e.getMessage());
             e.printStackTrace();
             session.setAttribute("cartError", "A database error occurred while updating your cart. Please try again.");
-        } catch (IllegalArgumentException e) {
-            System.err.println("CartServlet (IllegalArgumentException): " + e.getMessage());
-            session.setAttribute("cartError", "Invalid input for cart operation: " + e.getMessage());
+        } catch (NumberFormatException e) {
+            System.err.println("CartServlet (NumberFormatException): Invalid quantity format - " + e.getMessage());
+            session.setAttribute("cartError", "Invalid quantity provided.");
         } catch (Exception e) { // Catch-all for unexpected issues
             System.err.println("CartServlet (Unexpected Exception): " + e.getMessage());
             e.printStackTrace();
-            session.setAttribute("cartError", "An unexpected error occurred. Please try again.");
+            session.setAttribute("cartError", "An unexpected error occurred.");
         }
 
-        response.sendRedirect(request.getContextPath() + "/CartServlet"); // Redirect back to cart page to show changes/errors
+        // Redirect back to the cart page to show results/messages for POST actions
+        response.sendRedirect(request.getContextPath() + "/CartServlet");
     }
 }
